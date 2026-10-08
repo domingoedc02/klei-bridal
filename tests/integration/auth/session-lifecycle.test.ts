@@ -342,8 +342,14 @@ describe("password reset and sign out everywhere", () => {
       staffUserId: staff.id,
       newPassword: NEW_PASSWORD,
       actorUserId: null,
+      ip: "203.0.113.9",
     });
     expect(result).toEqual({ ok: true, revokedSessions: 2 });
+    const [audit] = await sql<{ ip: string | null }[]>`
+      SELECT host(ip) AS ip FROM audit_log
+      WHERE entity_id = ${staff.id} AND action = 'staff.password_reset'
+    `;
+    expect(audit!.ip).toBe("203.0.113.9");
     expect(await validateSession(db, a)).toBeNull();
     expect(await validateSession(db, b)).toBeNull();
     const [row] = await sql<{ locked_until: Date | null }[]>`
