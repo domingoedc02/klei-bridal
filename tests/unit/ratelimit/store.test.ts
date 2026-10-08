@@ -58,8 +58,6 @@ describe("budgets (spec/security → Rate limiting)", () => {
     expect(table).toEqual([
       ["enquiry-submit", "ip", 5, 600, "closed", "429"],
       ["send-my-list", "ip", 5, 3600, "closed", "429"],
-      ["login", "ip", 10, 900, "closed", "429"],
-      ["login", "account", 5, 900, "closed", "429"],
       ["enquiry-link", "ip", 30, 60, "open", "429"],
       ["enquiry-channel", "ip", 20, 60, "open", "silent-204"],
       ["admin-write", "session", 120, 60, "open", "429"],

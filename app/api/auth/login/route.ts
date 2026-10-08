@@ -5,34 +5,29 @@ import { z } from "zod";
 import { SESSION_COOKIE, sessionCookieOptions } from "@/server/auth/session";
 import { clientIp } from "@/server/ratelimit/client-ip";
 import { signIn } from "@/server/services/auth";
-import { errorResponse, isCrossOrigin, requestIdOf } from "@/server/services/auth-http";
+import { isCrossOrigin } from "@/server/services/auth-http";
+import { PipelineError, withPipeline } from "@/server/pipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const LoginBody = z.object({
   email: z.string().trim().email().max(320),
-  // Upper bound so a megabyte "password" cannot be fed to argon2.
   password: z.string().min(1).max(1024),
 });
 
-// One message for unknown email, wrong password and disabled account —
-// any difference is an enumeration oracle (KBS-27-1).
 const INVALID_MESSAGE = "Invalid email or password.";
 
-/** POST /api/auth/login — { email, password } → 204 + `kbs_session` cookie. */
-export async function POST(request: NextRequest) {
-  const requestId = requestIdOf(request.headers);
-
+async function handler(request: NextRequest) {
   if (isCrossOrigin(request.headers)) {
-    return errorResponse(403, "FORBIDDEN", "Cross-site request refused.", requestId);
+    throw new PipelineError(403, "FORBIDDEN", "Cross-site request refused.");
   }
 
   let json: unknown;
   try {
     json = await request.json();
-  } catch {
-    return errorResponse(400, "BAD_REQUEST", "Request body must be JSON.", requestId);
+  } catch (error) {
+    throw new PipelineError(400, "BAD_REQUEST", "Request body must be JSON.", { cause: error });
   }
 
   const parsed = LoginBody.safeParse(json);
@@ -42,9 +37,7 @@ export async function POST(request: NextRequest) {
       const key = issue.path.join(".") || "body";
       fields[key] ??= issue.message;
     }
-    return errorResponse(422, "VALIDATION_ERROR", "Check the highlighted fields.", requestId, {
-      fields,
-    });
+    throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", { fields });
   }
 
   const result = await signIn({
@@ -57,32 +50,29 @@ export async function POST(request: NextRequest) {
   if (!result.ok) {
     switch (result.reason) {
       case "invalid_credentials":
-        return errorResponse(401, "INVALID_CREDENTIALS", INVALID_MESSAGE, requestId);
+        throw new PipelineError(401, "INVALID_CREDENTIALS", INVALID_MESSAGE);
       case "account_locked": {
         const minutes = Math.ceil(result.retryAfterSeconds / 60);
-        return errorResponse(
+        throw new PipelineError(
           429,
           "ACCOUNT_LOCKED",
           `Too many failed sign-in attempts for this account. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
-          requestId,
-          { retryAfterSeconds: result.retryAfterSeconds },
+          { retryAfterSec: result.retryAfterSeconds },
         );
       }
       case "ip_rate_limited":
-        return errorResponse(
+        throw new PipelineError(
           429,
           "RATE_LIMITED",
           "Too many sign-in attempts from this network. Try again later.",
-          requestId,
-          { retryAfterSeconds: result.retryAfterSeconds },
+          { retryAfterSec: result.retryAfterSeconds },
         );
       case "unavailable":
-        return errorResponse(
+        throw new PipelineError(
           503,
           "SERVICE_UNAVAILABLE",
           "Sign-in is temporarily unavailable. Try again shortly.",
-          requestId,
-          { retryAfterSeconds: result.retryAfterSeconds },
+          { retryAfterSec: result.retryAfterSeconds },
         );
     }
   }
@@ -92,3 +82,5 @@ export async function POST(request: NextRequest) {
   response.headers.set("cache-control", "no-store");
   return response;
 }
+
+export const POST = withPipeline(handler, { auth: "public", rateLimit: null });

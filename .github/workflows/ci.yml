@@ -68,7 +68,7 @@ jobs:
         run: pnpm build
 
   integration-tests:
-    name: Integration tests (real Postgres)
+    name: Integration tests (real Postgres + Valkey)
     runs-on: ubuntu-latest
     services:
       # Same image as spec/setup's local docker-compose, so CI and a
@@ -83,6 +83,16 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd="pg_isready -U klei"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+      # Sign-in's lockout counters live in Valkey (KBS-11-1).
+      valkey:
+        image: valkey/valkey:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="valkey-cli ping"
           --health-interval=5s
           --health-timeout=5s
           --health-retries=10

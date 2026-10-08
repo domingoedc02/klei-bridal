@@ -4,8 +4,10 @@ import { z } from "zod";
 
 import { SESSION_COOKIE, sessionCookieOptions } from "@/server/auth/session";
 import { clientIp } from "@/server/ratelimit/client-ip";
+import { budgets } from "@/server/ratelimit/budgets";
 import { MIN_PASSWORD_LENGTH, changePassword } from "@/server/services/auth";
-import { errorResponse, isCrossOrigin, requestIdOf } from "@/server/services/auth-http";
+import { isCrossOrigin } from "@/server/services/auth-http";
+import { PipelineError, withPipeline } from "@/server/pipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,24 +20,16 @@ const ChangePasswordBody = z.object({
     .max(1024),
 });
 
-/**
- * POST /api/auth/password — { current_password, new_password } → 204 and
- * a NEW `kbs_session` cookie. Every other session of the account is
- * revoked, and this one is rotated: the cookie sent with this request is
- * dead once the response is written (KBS-27-2).
- */
-export async function POST(request: NextRequest) {
-  const requestId = requestIdOf(request.headers);
-
+async function handler(request: NextRequest) {
   if (isCrossOrigin(request.headers)) {
-    return errorResponse(403, "FORBIDDEN", "Cross-site request refused.", requestId);
+    throw new PipelineError(403, "FORBIDDEN", "Cross-site request refused.");
   }
 
   let json: unknown;
   try {
     json = await request.json();
-  } catch {
-    return errorResponse(400, "BAD_REQUEST", "Request body must be JSON.", requestId);
+  } catch (error) {
+    throw new PipelineError(400, "BAD_REQUEST", "Request body must be JSON.", { cause: error });
   }
 
   const parsed = ChangePasswordBody.safeParse(json);
@@ -45,9 +39,7 @@ export async function POST(request: NextRequest) {
       const key = issue.path.join(".") || "body";
       fields[key] ??= issue.message;
     }
-    return errorResponse(422, "VALIDATION_ERROR", "Check the highlighted fields.", requestId, {
-      fields,
-    });
+    throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", { fields });
   }
 
   const result = await changePassword({
@@ -61,13 +53,13 @@ export async function POST(request: NextRequest) {
   if (!result.ok) {
     switch (result.reason) {
       case "unauthenticated":
-        return errorResponse(401, "UNAUTHENTICATED", "Sign in again to continue.", requestId);
+        throw new PipelineError(401, "UNAUTHENTICATED", "Sign in again to continue.");
       case "wrong_current_password":
-        return errorResponse(422, "VALIDATION_ERROR", "Check the highlighted fields.", requestId, {
+        throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
           fields: { current_password: "Current password is incorrect." },
         });
       case "weak_password":
-        return errorResponse(422, "VALIDATION_ERROR", "Check the highlighted fields.", requestId, {
+        throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
           fields: { new_password: `Use at least ${MIN_PASSWORD_LENGTH} characters.` },
         });
     }
@@ -78,3 +70,5 @@ export async function POST(request: NextRequest) {
   response.headers.set("cache-control", "no-store");
   return response;
 }
+
+export const POST = withPipeline(handler, { auth: "public", rateLimit: budgets.adminWrite });

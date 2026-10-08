@@ -2,16 +2,19 @@ import { unstable_rethrow } from "next/navigation";
 import type { NextRequest } from "next/server";
 import type { Budget } from "../ratelimit/budgets";
 import type { RateLimitStore } from "../ratelimit/store";
+import { SESSION_COOKIE, SESSION_TOKEN_PATTERN } from "../auth/session";
+import { clientIp } from "../ratelimit/client-ip";
 import { defaultBodyLimits, enforceBodyLimit, type BodyLimits } from "./body-limit";
-import { clientIp } from "./clientIp";
 import { consoleReporter, mapError, type Reporter } from "./error-mapper";
 import { PipelineError } from "./errors";
 import { applySecurityHeaders } from "./headers";
+import { requestIdOf } from "./request-id";
 import { enforceRateLimit } from "./rate-limit";
 
 export { PipelineError, SilentlyDropped } from "./errors";
 export { readJson, readMultipart } from "./body-limit";
 export { enforceRateLimit } from "./rate-limit";
+export { requestIdOf } from "./request-id";
 
 export interface PipelineOptions {
   /**
@@ -44,11 +47,14 @@ async function sha256(value: string): Promise<string> {
 
 /** The id a budget counts against. A session cookie is hashed: no token is ever a Valkey key. */
 async function budgetId(budget: Budget, request: NextRequest): Promise<string> {
-  if (budget.dimension === "ip") return clientIp(request);
-  if (budget.dimension === "session") {
-    return sha256(request.cookies.get("kbs_session")?.value ?? "");
+  // A session budget falls back to the IP when there is no well-formed
+  // session cookie: a cookieless or random-cookie caller must not get a
+  // fresh (or shared, empty) bucket per request.
+  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  if (budget.dimension === "session" && token && SESSION_TOKEN_PATTERN.test(token)) {
+    return sha256(token);
   }
-  throw new Error(`budget ${budget.name}/${budget.dimension} is applied by its handler`);
+  return clientIp(request.headers);
 }
 
 function finalize(response: Response, requestId: string): Response {
@@ -70,14 +76,14 @@ function finalize(response: Response, requestId: string): Response {
  * KBS-11-2] → [validation: KBS-11-3] → handler → error mapper. Security
  * headers and the request id land on EVERY response, error responses included.
  */
-export function withPipeline<C>(handler: Handler<C>, options: PipelineOptions): Handler<C> {
-  if (options.rateLimit?.dimension === "account") {
-    throw new Error("per-account budgets are applied by the handler via enforceRateLimit");
-  }
+export function withPipeline<C>(
+  handler: Handler<C>,
+  options: PipelineOptions,
+): (request: NextRequest, context?: C) => Promise<Response> {
   const report = options.report ?? consoleReporter;
 
   return async (request, context) => {
-    const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    const requestId = requestIdOf(request.headers);
     let response: Response;
     try {
       const limited = enforceBodyLimit(request, options.bodyLimits ?? defaultBodyLimits);
@@ -95,7 +101,7 @@ export function withPipeline<C>(handler: Handler<C>, options: PipelineOptions): 
         throw new PipelineError(401, "UNAUTHENTICATED", "Please sign in.");
       }
 
-      response = await handler(limited, context);
+      response = await handler(limited, context as C);
     } catch (error) {
       // redirect() / notFound() are control flow, not failures.
       unstable_rethrow(error);

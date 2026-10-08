@@ -220,7 +220,6 @@ describe("withPipeline — rate limit (step 5)", () => {
   it.each([
     ["enquirySubmit", budgets.enquirySubmit],
     ["sendMyList", budgets.sendMyList],
-    ["loginIp", budgets.loginIp],
   ] as const)("fails CLOSED for %s when Valkey is unreachable", async (_name, budget: Budget) => {
     const handler = vi.fn(ok);
     const { route, report } = wrap(handler, { rateLimit: budget, rateLimitStore: () => downStore });
@@ -246,16 +245,22 @@ describe("withPipeline — rate limit (step 5)", () => {
     const store = counterStore();
     const hit = vi.spyOn(store, "hit");
     const { route } = wrap(ok, { rateLimit: budgets.adminWrite, rateLimitStore: () => store });
-    await route(post("{}", { cookie: "kbs_session=secret-session-token" }));
+    await route(post("{}", { cookie: `kbs_session=${"s".repeat(43)}` }));
     const key = hit.mock.calls[0]?.[0] ?? "";
     expect(key).toMatch(/^rl:admin-write:session:[0-9a-f]{64}$/);
-    expect(key).not.toContain("secret-session-token");
+    expect(key).not.toContain("s".repeat(43));
   });
 
-  it("refuses a per-account budget at wrap time — the handler applies it", () => {
-    expect(() => withPipeline(ok, { auth: "public", rateLimit: budgets.loginAccount })).toThrow(
-      /handler/,
-    );
+  it("keys a session budget on the IP when there is no well-formed session cookie", async () => {
+    const store = counterStore();
+    const hit = vi.spyOn(store, "hit");
+    const { route } = wrap(ok, { rateLimit: budgets.adminWrite, rateLimitStore: () => store });
+    await route(post("{}"));
+    await route(post("{}", { cookie: "kbs_session=not-a-real-token" }));
+    expect(hit.mock.calls.map((c) => c[0])).toEqual([
+      "rl:admin-write:session:203.0.113.7",
+      "rl:admin-write:session:203.0.113.7",
+    ]);
   });
 
   it("never touches the store for rateLimit: null", async () => {
@@ -332,6 +337,26 @@ describe("withPipeline — error mapper (step 11)", () => {
 });
 
 describe("withPipeline — headers on every response", () => {
+  it.each(["a".repeat(65), "abc\r\nset-cookie: x", "<script>", "id with spaces"])(
+    "replaces an unsafe incoming x-request-id (%s) with a fresh UUID",
+    async (unsafe) => {
+      const request = post("{}");
+      // Headers refuses CR/LF, so set the unsafe value on a raw Headers
+      // where the platform allows it, and skip values it rejects outright.
+      try {
+        request.headers.set("x-request-id", unsafe);
+      } catch {
+        return;
+      }
+      const response = await wrap(() => {
+        throw new Error("boom");
+      }).route(request);
+      const id = response.headers.get("x-request-id");
+      expect(id).toMatch(/^[0-9a-f-]{36}$/);
+      expect((await response.json()).error.request_id).toBe(id);
+    },
+  );
+
   it("reuses an incoming x-request-id and generates one otherwise", async () => {
     const { route } = wrap(ok);
     expect((await route(post("{}", { "x-request-id": "abc" }))).headers.get("x-request-id")).toBe(

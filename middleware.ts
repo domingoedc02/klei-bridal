@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { requestIdOf } from "./src/server/pipeline/request-id";
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
@@ -20,7 +21,7 @@ export const config = {
  * somewhere to attach without a structural change.
  */
 export function middleware(request: NextRequest) {
-  const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+  const requestId = requestIdOf(request.headers);
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
