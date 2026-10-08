@@ -6,6 +6,17 @@ This file owns the Dokploy app configuration, the `kbs-media` named volume, and 
 deploy/rollback procedure — the committed GitHub Actions CI workflow itself is `KBS-31-1`
 (backend-dev's), not duplicated here.
 
+## Who runs this
+
+**The client retains sole Dokploy and Hostinger access** (`decision/ops-access-and-backup-deferral`,
+`decision/client-ops-posture`) — this is the agreed delivery model, not a gap waiting to be
+closed. Every step below that touches the Dokploy UI, the VPS shell, or `docker exec` is
+**executed by the client (or whoever they designate)**, not by devops. devops's job is to make
+every step unambiguous enough that a non-engineer can follow it exactly and report back
+honestly — each section below ends with **"Report back"**: the exact text/output to send back
+to devops so the result can be read without guessing. Treat a step with no "Report back" line
+as not yet done, however confident the report sounds.
+
 ## ⚠ The one thing this runbook exists to prevent
 
 If `kbs-media` is ever configured as ephemeral storage instead of a Dokploy **named volume**,
@@ -88,6 +99,10 @@ pnpm images:verify
 # Must report 0 missing.
 ```
 
+**Report back (copy/paste, don't summarize):** the two raw counts (before/after), and the
+full output line from `pnpm images:verify`. A count that merely "looked about the same" is not
+a report devops can act on — the numbers themselves are the thing being checked.
+
 ## 4. AC-OPS-01 — the deploy-twice proof (run once after initial setup, and after ANY change
    to the Dokploy volume configuration)
 
@@ -113,15 +128,18 @@ second.
    corresponding upload. Treat as the volume falling back to ephemeral storage: stop, fix the
    Dokploy volume config (section 1, step 2), and re-run the whole proof from step 1 — do not
    assume a one-off fix is correct without re-running both deploys.
-6. **Record the result** (pass/fail, date, who ran it) in this file's "Verification log"
-   section below, or in the equivalent `KBS-31`/`KBS-34` issue comment if this file hasn't
-   been updated since.
+6. **Report back (not just "it worked"):** the derivative counts before deploy #1, after
+   deploy #1, and after deploy #2; the `pnpm images:verify` output after each deploy; and
+   whether `kbs-web`'s logs showed any `image_jobs` claims during or after either deploy
+   (copy the relevant log lines, or confirm none appeared). devops records pass/fail in the
+   "Verification log" below from that report — the client is not expected to judge pass/fail
+   themselves, only to run the steps and report what happened.
 
 ### Verification log
 
 | Date | Run by | Result | Notes |
 |---|---|---|---|
-| _(none yet — this runbook has not been executed against a real Dokploy app)_ | | | |
+| _(none yet — this proof has not been run against the real Dokploy app. Client-executed once there is a deployable image; devops will record the result here from their report.)_ | | | |
 
 ## 5. Rollback
 
@@ -130,6 +148,10 @@ second.
 3. Traefik re-points to the prior container — **typically under a minute, no rebuild.**
 4. Run the persistent-volume check (section 3) after a rollback too — a rollback is still a
    container swap and the same risk applies.
+
+**Report back:** the result of the volume check after rollback, and roughly how long the
+redeploy took to show as serving again (for the "under a minute" claim to mean something
+rather than be assumed).
 
 **This only works cleanly because of one standing rule: every migration must be
 backward-compatible with the previous release for at least one deploy cycle**
@@ -159,6 +181,7 @@ style preference.
 
 `spec/operations` (CI/CD, Deployment & rollback, the media-volume section) · `spec/setup`
 (env vars, `pnpm images:verify`/`images:backfill`) · `decision/vps-capacity` ·
-`decision/images` §3 · `KBS-7` (the Dockerfile this builds) · `KBS-9` (migrations) · `KBS-13`
-(encode queue, `images:verify`) · `KBS-27` (session rotation) · `KBS-28` (HSTS) ·
-`docs/runbook/go-live-checklist.md` · `docs/runbook/dns-records.md`.
+`decision/images` §3 · `decision/ops-access-and-backup-deferral` · `decision/client-ops-posture`
+(the client-executes delivery model) · `KBS-7` (the Dockerfile this builds) · `KBS-9`
+(migrations) · `KBS-13` (encode queue, `images:verify`) · `KBS-27` (session rotation) ·
+`KBS-28` (HSTS) · `docs/runbook/go-live-checklist.md` · `docs/runbook/dns-records.md`.
