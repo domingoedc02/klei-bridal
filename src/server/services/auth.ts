@@ -2,6 +2,10 @@ import { eq, sql } from "drizzle-orm";
 
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "@/server/auth/password";
 import {
+  assertPasswordAllowed,
+  MIN_PASSWORD_LENGTH as POLICY_MIN_PASSWORD_LENGTH,
+} from "@/server/auth/password-policy";
+import {
   createSession,
   revokeAllSessionsForUser,
   revokeSession,
@@ -199,13 +203,13 @@ export async function signOut(
 }
 
 /** spec/security: a new or reset password is at least 12 characters. */
-export const MIN_PASSWORD_LENGTH = 12;
+export const MIN_PASSWORD_LENGTH = POLICY_MIN_PASSWORD_LENGTH;
 
 export type ChangePasswordResult =
   | { ok: true; token: string; expiresAt: Date; revokedOtherSessions: number }
   | { ok: false; reason: "unauthenticated" }
   | { ok: false; reason: "wrong_current_password" }
-  | { ok: false; reason: "weak_password" };
+  | { ok: false; reason: "weak_password" | "password_too_common" | "unavailable" };
 
 /**
  * Password change from settings (current + new), KBS-27-2. In ONE
@@ -238,9 +242,8 @@ export async function changePassword(
   if (!user || !(await verifyPassword(user.passwordHash, input.currentPassword))) {
     return { ok: false, reason: "wrong_current_password" };
   }
-  if (input.newPassword.length < MIN_PASSWORD_LENGTH) {
-    return { ok: false, reason: "weak_password" };
-  }
+  const policy = await assertPasswordAllowed(input.newPassword, { email: session.staff.email });
+  if (!policy.ok) return { ok: false, reason: policy.reason };
 
   const passwordHash = await hashPassword(input.newPassword);
   return db.transaction(async (tx) => {
@@ -290,12 +293,14 @@ export async function resetPassword(
     ip?: string | null;
   },
   deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
-): Promise<{ ok: true; revokedSessions: number } | { ok: false; reason: "weak_password" }> {
+): Promise<
+  | { ok: true; revokedSessions: number }
+  | { ok: false; reason: "weak_password" | "password_too_common" | "unavailable" }
+> {
   const { db } = deps;
   const now = deps.now?.() ?? new Date();
-  if (input.newPassword.length < MIN_PASSWORD_LENGTH) {
-    return { ok: false, reason: "weak_password" };
-  }
+  const policy = await assertPasswordAllowed(input.newPassword);
+  if (!policy.ok) return { ok: false, reason: policy.reason };
   const passwordHash = await hashPassword(input.newPassword);
   const revokedSessions = await db.transaction(async (tx) => {
     await tx

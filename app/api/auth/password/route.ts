@@ -62,6 +62,16 @@ async function handler(request: NextRequest) {
         throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
           fields: { new_password: `Use at least ${MIN_PASSWORD_LENGTH} characters.` },
         });
+      case "password_too_common":
+        throw new PipelineError(422, "PASSWORD_TOO_COMMON", "Choose a less common password.", {
+          fields: { new_password: "Choose a less common password." },
+        });
+      case "unavailable":
+        throw new PipelineError(
+          503,
+          "SERVICE_UNAVAILABLE",
+          "Password policy is temporarily unavailable.",
+        );
     }
   }
 
