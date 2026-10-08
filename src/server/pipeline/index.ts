@@ -57,7 +57,7 @@ async function budgetId(budget: Budget, request: NextRequest): Promise<string> {
   return clientIp(request.headers);
 }
 
-function finalize(response: Response, requestId: string, pathname: string): Response {
+function finalize(response: Response, requestId: string, request: NextRequest): Response {
   let out = response;
   try {
     out.headers.set("x-request-id", requestId);
@@ -66,7 +66,8 @@ function finalize(response: Response, requestId: string, pathname: string): Resp
     out = new Response(response.body, response);
     out.headers.set("x-request-id", requestId);
   }
-  applySecurityHeaders(out.headers, pathname, { keepExisting: true });
+  const nonce = request.headers.get("x-nonce") ?? undefined;
+  applySecurityHeaders(out.headers, request.nextUrl.pathname, { keepExisting: true, nonce });
   return out;
 }
 
@@ -107,6 +108,6 @@ export function withPipeline<C>(
       unstable_rethrow(error);
       response = mapError(error, requestId, report);
     }
-    return finalize(response, requestId, request.nextUrl.pathname);
+    return finalize(response, requestId, request);
   };
 }

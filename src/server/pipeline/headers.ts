@@ -5,7 +5,7 @@
  * security headers themselves; they register an override here instead, so
  * the full set stays readable in one file and cannot drift per route.
  *
- * CSP is KBS-28-2 and attaches here.
+ * CSP (KBS-28-2) is report-only and nonce-based; the nonce comes from middleware.
  */
 
 /**
@@ -47,9 +47,42 @@ export const headerOverrides: readonly HeaderOverride[] = [
   },
 ];
 
-/** The complete security header set for a path: baseline, then overrides. */
-export function securityHeadersFor(pathname: string): Record<string, string> {
-  const set = { ...baselineSecurityHeaders };
+export const CSP_REPORT_ONLY = "content-security-policy-report-only";
+
+/**
+ * Report-only first: there is no staging environment, so collect violations on
+ * real pages before enforcing. `script-src` never permits unsafe-inline.
+ */
+export function contentSecurityPolicy(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data:",
+    "font-src 'self' https://fonts.gstatic.com",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "report-uri /api/csp-report",
+    "upgrade-insecure-requests",
+  ].join("; ");
+}
+
+/** Web Crypto keeps nonce generation compatible with Next middleware's Edge runtime. */
+export function generateNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+/** The complete security header set for a path: baseline (+ CSP when a nonce is given), then overrides. */
+export function securityHeadersFor(pathname: string, nonce?: string): Record<string, string> {
+  const set: Record<string, string> = { ...baselineSecurityHeaders };
+  if (nonce) set[CSP_REPORT_ONLY] = contentSecurityPolicy(nonce);
   for (const override of headerOverrides) {
     if (override.matches(pathname)) Object.assign(set, override.headers);
   }
@@ -65,9 +98,11 @@ export function securityHeadersFor(pathname: string): Record<string, string> {
 export function applySecurityHeaders(
   headers: Headers,
   pathname: string,
-  { keepExisting = false }: { keepExisting?: boolean } = {},
+  { keepExisting = false, nonce }: { keepExisting?: boolean; nonce?: string } = {},
 ): void {
-  for (const [name, value] of Object.entries(baselineSecurityHeaders)) {
+  const base: Record<string, string> = { ...baselineSecurityHeaders };
+  if (nonce) base[CSP_REPORT_ONLY] = contentSecurityPolicy(nonce);
+  for (const [name, value] of Object.entries(base)) {
     if (!keepExisting || !headers.has(name)) headers.set(name, value);
   }
   for (const override of headerOverrides) {
