@@ -1,10 +1,28 @@
-// Silhouettes, materials, collections — including near-duplicate warning
-// and merge. Real implementation: KBS-22.
+import Link from "next/link";
+
+const categoryTypes = [
+  ["silhouettes", "A-line, ball gown and more"],
+  ["materials", "Satin, mikado, lace and more"],
+  ["collections", "Minimalist, modern, lace and tulle"],
+] as const;
+
 export default function AdminCategoriesPage() {
   return (
-    <main>
+    <main className="admin-page">
       <h1>Categories</h1>
-      <p>Admin categories placeholder (KBS-6) — real content lands with KBS-22.</p>
+      <p>Manage filters used across gown listings.</p>
+      <nav aria-label="Category types">
+        <ul>
+          {categoryTypes.map(([type, description]) => (
+            <li key={type}>
+              <Link href={`/admin/categories/${type}`}>
+                {type[0]?.toUpperCase() + type.slice(1)}
+              </Link>{" "}
+              — {description}
+            </li>
+          ))}
+        </ul>
+      </nav>
     </main>
   );
 }
