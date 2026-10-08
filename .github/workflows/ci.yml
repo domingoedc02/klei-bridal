@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  # Dummy, non-production values only — never a real secret in CI
+  # (spec/operations: "no production secret is ever present in CI").
+  NODE_ENV: test
+  DATABASE_URL: postgresql://klei:klei_ci_pw@localhost:5432/klei_ci
+  REDIS_URL: redis://localhost:6379
+  SESSION_SECRET: ci-only-session-secret-not-a-real-secret-00
+  SITE_URL: http://localhost:3000
+  NEXT_PUBLIC_SITE_URL: http://localhost:3000
+  MAIL_PROVIDER_API_KEY: ci-dummy-key
+  MAIL_FROM_ADDRESS: enquiries@kleibridal.com
+  MAIL_SENDING_DOMAIN: kleibridal.com
+  STUDIO_ENQUIRY_EMAIL: studio@kleibridal.com
+  MAIL_DRY_RUN: "true"
+  IMAGE_ORIGINALS_PATH: ./.data/images/originals
+  IMAGE_CACHE_PATH: ./.data/images/derivatives
+
+jobs:
+  lint-typecheck-test:
+    name: Lint, typecheck, boundaries, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version comes from package.json "packageManager"; a second one here
+      # fails setup with "Multiple versions of pnpm specified".
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (includes the module-boundaries check)
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test

@@ -1,0 +1,7 @@
+# Placeholder — the real multi-stage build exclusions are added by the
+# containerisation task (KBS-7), which also adds the Dockerfile itself.
+node_modules
+.next
+.git
+.env*
+.data
