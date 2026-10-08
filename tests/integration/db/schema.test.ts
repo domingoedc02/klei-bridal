@@ -241,3 +241,62 @@ describe("enquiry_gowns: composite PK and immutable snapshot shape", () => {
     await sql`DELETE FROM gowns WHERE id = ${gownId}`;
   });
 });
+
+describe("seed: every vocabulary id is a UUIDv7 (src/server/db/uuid.ts)", () => {
+  // Assumes `pnpm db:seed` ran before this suite (CI does; see ci.yml).
+  // The version is the first hex digit of the third group.
+  it.each(["silhouettes", "materials", "collections"])("%s ids are version 7", async (table) => {
+    const rows = await sql`SELECT id FROM ${sql(table)}`;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(String(row.id).charAt(14)).toBe("7");
+    }
+  });
+});
+
+describe("price_history: a gown with price history cannot be hard-deleted", () => {
+  it("DELETE FROM gowns fails on the RESTRICT foreign key", async () => {
+    const [staff] = await sql`
+      INSERT INTO staff_users (id, name, email, password_hash)
+      VALUES (gen_random_uuid(), 'Price Staff', ${"price-" + randomUUID() + "@example.com"}, 'x')
+      RETURNING id
+    `;
+    const staffId = staff?.id as string;
+    const [gown] = await sql`
+      INSERT INTO gowns (id, slug, name, price_status, price_minor)
+      VALUES (gen_random_uuid(), ${"restrict-test-" + randomUUID()}, 'Restrict test', 'priced', 500000)
+      RETURNING id
+    `;
+    const gownId = gown?.id as string;
+    await sql`
+      INSERT INTO price_history (id, gown_id, old_price_minor, new_price_minor, old_status, new_status, actor_user_id)
+      VALUES (gen_random_uuid(), ${gownId}, NULL, 500000, 'on_request', 'priced', ${staffId})
+    `;
+
+    await expect(sql`DELETE FROM gowns WHERE id = ${gownId}`).rejects.toThrow(
+      /price_history_gown_id_gowns_id_fk/,
+    );
+
+    // Cleanup as the owner role (kbs_app cannot delete history).
+    await sql`DELETE FROM price_history WHERE gown_id = ${gownId}`;
+    await sql`DELETE FROM gowns WHERE id = ${gownId}`;
+    await sql`DELETE FROM staff_users WHERE id = ${staffId}`;
+  });
+});
+
+describe("_migrations: read-only to the app role", () => {
+  it("kbs_app can read _migrations but cannot write it", async () => {
+    if (!kbsAppSql) throw new Error("kbs_app connection not ready");
+    const rows = await kbsAppSql`SELECT filename FROM _migrations`;
+    expect(rows.length).toBeGreaterThan(0);
+    await expect(
+      kbsAppSql`INSERT INTO _migrations (filename) VALUES ('9999_forged.sql')`,
+    ).rejects.toThrow(/permission denied/);
+    await expect(kbsAppSql`UPDATE _migrations SET filename = filename WHERE false`).rejects.toThrow(
+      /permission denied/,
+    );
+    await expect(kbsAppSql`DELETE FROM _migrations WHERE false`).rejects.toThrow(
+      /permission denied/,
+    );
+  });
+});

@@ -10,10 +10,14 @@
  * here — they depend on the image pipeline (KBS-13) actually running
  * `sharp` over placeholder photographs, which does not exist yet. That
  * lands with KBS-13, appending to this file rather than replacing it.
+ *
+ * Ids come from generateId() (UUIDv7) like every other row, never
+ * gen_random_uuid() (v4) — see src/server/db/uuid.ts.
  */
 import postgres from "postgres";
 
 import { env } from "../../src/config/env";
+import { generateId } from "../../src/server/db/uuid";
 
 const SILHOUETTES = ["A-line", "Ball gown", "Mermaid", "Trumpet", "Sheath", "Empire"];
 const MATERIALS = ["Satin", "Mikado", "Lace", "Tulle", "Glitter", "Organza", "Crepe"];
@@ -46,21 +50,21 @@ async function main() {
 
     for (const name of SILHOUETTES) {
       await sql`
-        INSERT INTO silhouettes (id, name, slug) VALUES (gen_random_uuid(), ${name}, ${slugify(name)})
+        INSERT INTO silhouettes (id, name, slug) VALUES (${generateId()}, ${name}, ${slugify(name)})
         ON CONFLICT (lower(trim(name))) DO NOTHING
       `;
     }
 
     for (const name of MATERIALS) {
       await sql`
-        INSERT INTO materials (id, name, slug) VALUES (gen_random_uuid(), ${name}, ${slugify(name)})
+        INSERT INTO materials (id, name, slug) VALUES (${generateId()}, ${name}, ${slugify(name)})
         ON CONFLICT (lower(trim(name))) DO NOTHING
       `;
     }
 
     for (const name of COLLECTIONS) {
       await sql`
-        INSERT INTO collections (id, name, slug) VALUES (gen_random_uuid(), ${name}, ${slugify(name)})
+        INSERT INTO collections (id, name, slug) VALUES (${generateId()}, ${name}, ${slugify(name)})
         ON CONFLICT (lower(trim(name))) DO NOTHING
       `;
     }

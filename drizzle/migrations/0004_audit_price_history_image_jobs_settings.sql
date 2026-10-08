@@ -43,7 +43,10 @@ CREATE TABLE "settings" (
 --> statement-breakpoint
 ALTER TABLE "audit_log" ADD CONSTRAINT "audit_log_actor_user_id_staff_users_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."staff_users"("id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "price_history" ADD CONSTRAINT "price_history_gown_id_gowns_id_fk" FOREIGN KEY ("gown_id") REFERENCES "public"."gowns"("id") ON DELETE cascade ON UPDATE no action;
+-- RESTRICT, not CASCADE: price history is an append-only business
+-- record (a bride's screenshot must stay answerable), so a gown that
+-- has any price history can be archived but never hard-deleted.
+ALTER TABLE "price_history" ADD CONSTRAINT "price_history_gown_id_gowns_id_fk" FOREIGN KEY ("gown_id") REFERENCES "public"."gowns"("id") ON DELETE restrict ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "price_history" ADD CONSTRAINT "price_history_actor_user_id_staff_users_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."staff_users"("id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
@@ -96,3 +99,8 @@ REVOKE UPDATE, DELETE ON "price_history" FROM kbs_app;
 GRANT SELECT, INSERT ON "audit_log" TO kbs_app;
 --> statement-breakpoint
 GRANT SELECT, INSERT ON "price_history" TO kbs_app;
+--> statement-breakpoint
+-- `_migrations` (created by scripts/migrate.ts before any file runs, so
+-- the blanket GRANT above reached it) belongs to the migration role
+-- alone: the app may read which migrations ran, never rewrite that.
+REVOKE INSERT, UPDATE, DELETE ON "_migrations" FROM kbs_app;

@@ -18,7 +18,8 @@ export const priceHistory = pgTable(
     id: uuid("id").primaryKey().$defaultFn(generateId),
     gownId: uuid("gown_id")
       .notNull()
-      .references(() => gowns.id, { onDelete: "cascade" }),
+      // RESTRICT: history outlives nothing it describes (migration 0004).
+      .references(() => gowns.id, { onDelete: "restrict" }),
     oldPriceMinor: bigint("old_price_minor", { mode: "number" }),
     newPriceMinor: bigint("new_price_minor", { mode: "number" }),
     oldStatus: text("old_status").notNull(),
