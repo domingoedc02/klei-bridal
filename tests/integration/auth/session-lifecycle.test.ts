@@ -17,6 +17,7 @@ import {
 } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { MemoryAttemptStore } from "@/server/ratelimit/attempt-store";
+import { csrfHeaders } from "../csrf-headers";
 import {
   changePassword,
   resetPassword,
@@ -87,8 +88,8 @@ function passwordRequest(token: string, body: unknown) {
   return new NextRequest("http://localhost:3000/api/auth/password", {
     method: "POST",
     headers: {
+      ...csrfHeaders(`${SESSION_COOKIE}=${token}`),
       "content-type": "application/json",
-      cookie: `${SESSION_COOKIE}=${token}`,
       "x-real-ip": "198.51.100.8",
     },
     body: JSON.stringify(body),
@@ -119,6 +120,17 @@ describe("account disable (AC-ADM-27) — the test that proves the architecture"
 
     expect(await validateSession(db, token)).toBeNull();
     // ...and a real authenticated endpoint refuses that cookie on the next call.
+    const response = await passwordRoute(
+      passwordRequest(token, { current_password: PASSWORD, new_password: NEW_PASSWORD }),
+    );
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.code).toBe("UNAUTHENTICATED");
+  });
+
+  it("refuses a revoked (signed-out) cookie replayed on a real route with 401", async () => {
+    const staff = await makeStaff();
+    const token = await signedIn(staff);
+    await sql`UPDATE sessions SET revoked_at = now() WHERE token_hash = ${hashSessionToken(token)}`;
     const response = await passwordRoute(
       passwordRequest(token, { current_password: PASSWORD, new_password: NEW_PASSWORD }),
     );

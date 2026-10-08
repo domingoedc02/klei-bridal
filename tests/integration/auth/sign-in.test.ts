@@ -9,6 +9,7 @@ import { hashPassword } from "@/server/auth/password";
 import { SESSION_COOKIE, hashSessionToken, validateSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { MemoryAttemptStore } from "@/server/ratelimit/attempt-store";
+import { csrfHeaders } from "../csrf-headers";
 import { signIn, signOut } from "@/server/services/auth";
 
 /**
@@ -152,7 +153,12 @@ describe("no user enumeration, including timing", () => {
       loginRoute(
         new NextRequest("http://localhost:3000/api/auth/login", {
           method: "POST",
-          headers: { "content-type": "application/json", "x-real-ip": ip(), "x-request-id": "r1" },
+          headers: {
+            ...csrfHeaders(),
+            "content-type": "application/json",
+            "x-real-ip": ip(),
+            "x-request-id": "r1",
+          },
           body: JSON.stringify({ email, password }),
         }),
       );
@@ -236,7 +242,7 @@ describe("lockout (AC-ADM-29)", () => {
       loginRoute(
         new NextRequest("http://localhost:3000/api/auth/login", {
           method: "POST",
-          headers: { "content-type": "application/json", "x-real-ip": ip() },
+          headers: { ...csrfHeaders(), "content-type": "application/json", "x-real-ip": ip() },
           body: JSON.stringify({ email: staff.email, password }),
         }),
       );
@@ -244,7 +250,7 @@ describe("lockout (AC-ADM-29)", () => {
     const res = await loginRoute(
       new NextRequest("http://localhost:3000/api/auth/login", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-real-ip": ip() },
+        headers: { ...csrfHeaders(), "content-type": "application/json", "x-real-ip": ip() },
         body: JSON.stringify({ email: staff.email, password: PASSWORD }),
       }),
     );
@@ -282,7 +288,7 @@ describe("sign-out (KBS-27-1)", () => {
     const login = await loginRoute(
       new NextRequest("http://localhost:3000/api/auth/login", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-real-ip": ip() },
+        headers: { ...csrfHeaders(), "content-type": "application/json", "x-real-ip": ip() },
         body: JSON.stringify({ email: staff.email, password: PASSWORD }),
       }),
     );
@@ -303,7 +309,7 @@ describe("sign-out (KBS-27-1)", () => {
     const logout = await logoutRoute(
       new NextRequest("http://localhost:3000/api/auth/logout", {
         method: "POST",
-        headers: { cookie: `${SESSION_COOKIE}=${token}` },
+        headers: csrfHeaders(`${SESSION_COOKIE}=${token}`),
       }),
     );
     expect(logout.status).toBe(204);

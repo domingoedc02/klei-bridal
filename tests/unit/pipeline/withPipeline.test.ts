@@ -182,6 +182,67 @@ describe("withPipeline — session, CSRF and authorization (KBS-11-2)", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it("refuses the channel beacon when Origin is missing", async () => {
+    const request = new NextRequest("http://localhost:3000/e/link-token/channel", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "{}",
+    });
+    const handler = vi.fn(ok);
+    await expectEnvelope(await wrap(handler).route(request), 403, "FORBIDDEN");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed or opaque Origin", async () => {
+    for (const origin of ["null", "not a url", "http://localhost:3000.evil.example"]) {
+      const handler = vi.fn(ok);
+      await expectEnvelope(await wrap(handler).route(post("{}", { origin })), 403, "FORBIDDEN");
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses a forged token and a header that does not match the cookie", async () => {
+    const real = mintCsrfToken();
+    const forged = `${real.split(".")[0]}.${"A".repeat(43)}`;
+    for (const headers of [
+      { cookie: `kbs_csrf=${forged}`, "x-csrf-token": forged },
+      { cookie: `kbs_csrf=${real}`, "x-csrf-token": mintCsrfToken() },
+    ]) {
+      const handler = vi.fn(ok);
+      await expectEnvelope(await wrap(handler).route(post("{}", headers)), 403, "FORBIDDEN");
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
+
+  it("skips CSRF on GET", async () => {
+    const response = await wrap(ok).route(new NextRequest(URL_, { method: "GET" }));
+    expect(response.status).toBe(200);
+  });
+
+  it("issues the CSRF cookie readable by JS, Path=/, SameSite=Lax, Secure outside development", async () => {
+    const response = await wrap(ok).route(new NextRequest(URL_, { method: "GET" }));
+    const cookie = response.headers.get("set-cookie")!;
+    expect(cookie).toMatch(/^kbs_csrf=[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}; /);
+    expect(cookie).toMatch(/; Path=\//);
+    expect(cookie).toMatch(/; SameSite=Lax/);
+    expect(cookie).toMatch(/; Secure/);
+    // The client echoes it into x-csrf-token, so it must not be HttpOnly.
+    expect(cookie).not.toMatch(/HttpOnly/i);
+    expect(cookie).not.toMatch(/Domain=/i);
+  });
+
+  it("does not issue a CSRF cookie on an error response, nor re-issue one already held", async () => {
+    const refused = await wrap(ok).route(post("{}", { cookie: "", "x-csrf-token": "" }));
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("set-cookie")).toBeNull();
+
+    const held = await wrap(ok).route(
+      new NextRequest(URL_, { method: "GET", headers: { cookie: `kbs_csrf=${mintCsrfToken()}` } }),
+    );
+    expect(held.status).toBe(200);
+    expect(held.headers.get("set-cookie")).toBeNull();
+  });
+
   const readsBody = async (request: NextRequest) => Response.json(await readJson(request));
 
   it("413s a JSON body whose Content-Length is over 64KB before reading it", async () => {
