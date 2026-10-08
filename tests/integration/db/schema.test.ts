@@ -254,6 +254,22 @@ describe("seed: every vocabulary id is a UUIDv7 (src/server/db/uuid.ts)", () => 
   });
 });
 
+describe("seed: sample gowns, one in stock and one made-to-order (KBS-9 AC-10)", () => {
+  // Assumes `pnpm db:seed` ran before this suite (CI does; see ci.yml).
+  it("seeds at least one in-stock and one made-to-order gown, as drafts with v7 ids", async () => {
+    const rows = await sql`
+      SELECT id, is_in_stock, status FROM gowns
+      WHERE slug IN ('sample-in-stock-a-line', 'sample-made-to-order-mermaid')
+    `;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.is_in_stock).sort()).toEqual([false, true]);
+    for (const row of rows) {
+      expect(String(row.id).charAt(14)).toBe("7");
+      expect(row.status).toBe("draft");
+    }
+  });
+});
+
 describe("price_history: a gown with price history cannot be hard-deleted", () => {
   it("DELETE FROM gowns fails on the RESTRICT foreign key", async () => {
     const [staff] = await sql`

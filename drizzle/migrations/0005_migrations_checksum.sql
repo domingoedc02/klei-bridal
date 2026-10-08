@@ -1,0 +1,11 @@
+-- KBS-9 AC-8: an applied migration is never edited in place. Each
+-- `_migrations` row records the sha256 of the file's bytes as applied;
+-- scripts/migrate.ts compares it on every run and refuses to continue on
+-- a mismatch.
+--
+-- Nullable on purpose: rows for 0001–0004 (applied before this column
+-- existed) are backfilled by scripts/migrate.ts on the run that applies
+-- this file, from the committed files as they stand — every run after
+-- that is verified. A new migration, never an edit to 0001–0004, because
+-- those are already applied.
+ALTER TABLE "_migrations" ADD COLUMN IF NOT EXISTS "checksum" text;

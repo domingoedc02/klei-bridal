@@ -6,10 +6,13 @@
  * idempotent seed migration" — this is that, kept out of
  * drizzle/migrations/ on purpose).
  *
- * Sample gowns, images and enquiries (spec/setup/seed) are NOT included
- * here — they depend on the image pipeline (KBS-13) actually running
- * `sharp` over placeholder photographs, which does not exist yet. That
- * lands with KBS-13, appending to this file rather than replacing it.
+ * Two minimal sample gowns — one in stock, one made-to-order (KBS-9
+ * AC-10) — with no images: `gowns.hero_image_id` is nullable and a gown
+ * may have zero `gown_images` rows. They are seeded as `draft`, so a seed
+ * run anywhere never puts them in the public catalogue. The fuller
+ * fixture set with photographs (spec/setup/seed) depends on the image
+ * pipeline running `sharp`, and lands with KBS-13, appending to this file
+ * rather than replacing it.
  *
  * Ids come from generateId() (UUIDv7) like every other row, never
  * gen_random_uuid() (v4) — see src/server/db/uuid.ts.
@@ -22,6 +25,24 @@ import { generateId } from "../../src/server/db/uuid";
 const SILHOUETTES = ["A-line", "Ball gown", "Mermaid", "Trumpet", "Sheath", "Empire"];
 const MATERIALS = ["Satin", "Mikado", "Lace", "Tulle", "Glitter", "Organza", "Crepe"];
 const COLLECTIONS = ["Minimalist", "Modern", "Lace", "Tulle", "New Arrivals"];
+
+// Keyed on slug, so a re-run is a no-op. `is_in_stock` is set explicitly
+// on both — the column defaults to false (made-to-order), and AC-10 asks
+// for one of each.
+const SAMPLE_GOWNS = [
+  {
+    slug: "sample-in-stock-a-line",
+    name: "Sample — In-stock A-line",
+    silhouette: "A-line",
+    isInStock: true,
+  },
+  {
+    slug: "sample-made-to-order-mermaid",
+    name: "Sample — Made-to-order Mermaid",
+    silhouette: "Mermaid",
+    isInStock: false,
+  },
+];
 
 function slugify(name: string): string {
   return name
@@ -66,6 +87,17 @@ async function main() {
       await sql`
         INSERT INTO collections (id, name, slug) VALUES (${generateId()}, ${name}, ${slugify(name)})
         ON CONFLICT (lower(trim(name))) DO NOTHING
+      `;
+    }
+
+    console.log("Seeding sample gowns...");
+
+    for (const gown of SAMPLE_GOWNS) {
+      await sql`
+        INSERT INTO gowns (id, slug, name, silhouette_id, status, price_status, is_in_stock)
+        SELECT ${generateId()}, ${gown.slug}, ${gown.name}, s.id, 'draft', 'on_request', ${gown.isInStock}
+        FROM silhouettes s WHERE lower(trim(s.name)) = lower(trim(${gown.silhouette}))
+        ON CONFLICT (slug) DO NOTHING
       `;
     }
 
