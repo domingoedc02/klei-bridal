@@ -170,3 +170,26 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  docker-build:
+    name: Docker build + container smoke
+    runs-on: ubuntu-latest
+    # Verification only: CI never pushes or deploys this image. Dokploy builds
+    # the same Dockerfile on the VPS. The job gets no secrets; the build needs
+    # none, and the smoke runs on the dummy values in scripts/ci-docker-smoke.sh.
+    steps:
+      - uses: actions/checkout@v4
+
+      # NEXT_PUBLIC_SITE_URL is the only build arg: it is inlined into the
+      # client bundle, so Dokploy must set it to the live origin. Here it is
+      # deliberately not a real domain.
+      - name: Build runtime image
+        run: docker build --build-arg NEXT_PUBLIC_SITE_URL=http://localhost:3000 -t kbs-web:ci .
+
+      # The migrate one-off is the builder stage (it has tsx and the SQL files;
+      # the runtime image has neither). It reuses the cached layers from above.
+      - name: Build migrate image (builder stage)
+        run: docker build --target builder -t kbs-migrate:ci .
+
+      - name: Container smoke (config, migrations, two deploys on one volume, missing-var exit)
+        run: scripts/ci-docker-smoke.sh kbs-web:ci kbs-migrate:ci
