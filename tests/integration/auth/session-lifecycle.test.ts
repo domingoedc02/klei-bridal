@@ -368,7 +368,7 @@ describe("password reset and sign out everywhere", () => {
     expect(
       await resetPassword({
         staffUserId: staff.id,
-        newPassword: "test-staff-long-password!",
+        newPassword: `${staff.email.split("@", 1)[0]}-reset!`,
         actorUserId: null,
       }),
     ).toEqual({ ok: false, reason: "password_too_common" });
