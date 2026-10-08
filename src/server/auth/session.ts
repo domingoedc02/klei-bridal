@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, ne } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import type { Database } from "@/server/db/client";
@@ -22,8 +22,18 @@ import { sessions, staffUsers } from "@/server/db/schema";
  */
 export const SESSION_COOKIE = "kbs_session";
 
-/** Absolute lifetime of a session row from sign-in. KBS-27-2 adds the idle timeout. */
+/** Absolute cap from `created_at`, regardless of activity (spec/security). */
 export const SESSION_ABSOLUTE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Sliding idle timeout, measured from `last_seen_at`. */
+export const SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `last_seen_at` is written at most this often, so the per-request lookup
+ * is a read, not a write, on all but one request in five minutes. The
+ * idle timeout is therefore accurate to within this interval.
+ */
+export const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 // 32 bytes → 43 base64url characters, no padding.
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -103,11 +113,18 @@ export interface ValidSession {
  * The per-request lookup (spec/security):
  *
  *   token_hash = sha256(cookie) AND revoked_at IS NULL
- *     AND expires_at > now() AND staff_user.is_active = true
+ *     AND expires_at > now AND created_at > now - 14d
+ *     AND last_seen_at > now - 24h AND staff_user.is_active = true
  *
  * The `is_active` join is what makes disabling an account take effect on
- * that person's very next request. Any miss returns null — the caller
+ * that person's very next request (AC-ADM-27) — no expiry has to catch
+ * up. `expires_at` already equals `created_at + 14d`; the `created_at`
+ * condition restates the absolute cap so a row written with a later
+ * `expires_at` still cannot outlive it. Any miss returns null — the caller
  * answers 401 without saying which condition failed.
+ *
+ * A hit slides the idle window by touching `last_seen_at`, at most once
+ * per SESSION_TOUCH_INTERVAL_MS.
  */
 export async function validateSession(
   db: Database,
@@ -120,6 +137,7 @@ export async function validateSession(
     .select({
       sessionId: sessions.id,
       expiresAt: sessions.expiresAt,
+      lastSeenAt: sessions.lastSeenAt,
       staffId: staffUsers.id,
       name: staffUsers.name,
       email: staffUsers.email,
@@ -131,17 +149,41 @@ export async function validateSession(
         eq(sessions.tokenHash, hashSessionToken(token)),
         isNull(sessions.revokedAt),
         gt(sessions.expiresAt, now),
+        gt(sessions.createdAt, new Date(now.getTime() - SESSION_ABSOLUTE_TTL_MS)),
+        gt(sessions.lastSeenAt, new Date(now.getTime() - SESSION_IDLE_TIMEOUT_MS)),
         eq(staffUsers.isActive, true),
       ),
     )
     .limit(1);
 
   if (!row) return null;
+
+  if (now.getTime() - row.lastSeenAt.getTime() >= SESSION_TOUCH_INTERVAL_MS) {
+    await touchSession(db, row.sessionId, now);
+  }
+
   return {
     sessionId: row.sessionId,
     expiresAt: row.expiresAt,
     staff: { id: row.staffId, name: row.name, email: row.email },
   };
+}
+
+/**
+ * Slides the idle window. Conditional on the stored value being stale, so
+ * concurrent requests on one session write it once, and a clock that runs
+ * behind never moves `last_seen_at` backwards.
+ */
+export async function touchSession(db: DbOrTx, sessionId: string, now: Date): Promise<void> {
+  await db
+    .update(sessions)
+    .set({ lastSeenAt: now })
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        lte(sessions.lastSeenAt, new Date(now.getTime() - SESSION_TOUCH_INTERVAL_MS)),
+      ),
+    );
 }
 
 /**
@@ -161,4 +203,60 @@ export async function revokeSession(
     .where(and(eq(sessions.tokenHash, hashSessionToken(token)), isNull(sessions.revokedAt)))
     .returning({ id: sessions.id });
   return revoked.length > 0;
+}
+
+/**
+ * Revokes every live session of one account — "sign out everywhere", a
+ * password change (with `exceptSessionId`, the session that made it) and
+ * a reset or disable (all of them). Returns how many rows it revoked.
+ *
+ * Disabling is already immediate through the `is_active` join; revoking
+ * the rows as well means re-enabling the account does not bring a
+ * leaver's old cookies back to life.
+ */
+export async function revokeAllSessionsForUser(
+  db: DbOrTx,
+  staffUserId: string,
+  now: Date,
+  options: { exceptSessionId?: string } = {},
+): Promise<number> {
+  const revoked = await db
+    .update(sessions)
+    .set({ revokedAt: now })
+    .where(
+      and(
+        eq(sessions.staffUserId, staffUserId),
+        isNull(sessions.revokedAt),
+        ...(options.exceptSessionId ? [ne(sessions.id, options.exceptSessionId)] : []),
+      ),
+    )
+    .returning({ id: sessions.id });
+  return revoked.length;
+}
+
+/**
+ * Rotation on a privilege-relevant event (password change): the current
+ * row is revoked and a brand-new row and token replace it, so a token
+ * captured before the change is dead after it.
+ */
+export async function rotateSession(
+  db: DbOrTx,
+  input: {
+    sessionId: string;
+    staffUserId: string;
+    ip: string | null;
+    userAgent: string | null;
+    now: Date;
+  },
+): Promise<NewSession> {
+  await db
+    .update(sessions)
+    .set({ revokedAt: input.now })
+    .where(and(eq(sessions.id, input.sessionId), isNull(sessions.revokedAt)));
+  return createSession(db, {
+    staffUserId: input.staffUserId,
+    ip: input.ip,
+    userAgent: input.userAgent,
+    now: input.now,
+  });
 }

@@ -1,7 +1,13 @@
 import { eq, sql } from "drizzle-orm";
 
-import { DUMMY_PASSWORD_HASH, verifyPassword } from "@/server/auth/password";
-import { createSession, revokeSession, validateSession } from "@/server/auth/session";
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "@/server/auth/password";
+import {
+  createSession,
+  revokeAllSessionsForUser,
+  revokeSession,
+  rotateSession,
+  validateSession,
+} from "@/server/auth/session";
 import { db as defaultDb } from "@/server/db/client";
 import type { Database } from "@/server/db/client";
 import { auditLog, staffUsers } from "@/server/db/schema";
@@ -181,4 +187,172 @@ export async function signOut(
       detail: { session_id: session.sessionId },
     });
   }
+}
+
+/** spec/security: a new or reset password is at least 12 characters. */
+export const MIN_PASSWORD_LENGTH = 12;
+
+export type ChangePasswordResult =
+  | { ok: true; token: string; expiresAt: Date; revokedOtherSessions: number }
+  | { ok: false; reason: "unauthenticated" }
+  | { ok: false; reason: "wrong_current_password" }
+  | { ok: false; reason: "weak_password" };
+
+/**
+ * Password change from settings (current + new), KBS-27-2. In ONE
+ * transaction: store the new hash, revoke every OTHER session of the
+ * account (a session an attacker holds cannot outlive the password), and
+ * rotate the session that made the change — its old token is revoked and
+ * a new one issued, so a copy of the pre-change cookie is dead too.
+ */
+export async function changePassword(
+  input: {
+    token: string | undefined | null;
+    currentPassword: string;
+    newPassword: string;
+    ip: string | null;
+    userAgent: string | null;
+  },
+  deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
+): Promise<ChangePasswordResult> {
+  const { db } = deps;
+  const now = deps.now?.() ?? new Date();
+
+  const session = await validateSession(db, input.token, now);
+  if (!session) return { ok: false, reason: "unauthenticated" };
+
+  const [user] = await db
+    .select({ passwordHash: staffUsers.passwordHash })
+    .from(staffUsers)
+    .where(eq(staffUsers.id, session.staff.id))
+    .limit(1);
+  if (!user || !(await verifyPassword(user.passwordHash, input.currentPassword))) {
+    return { ok: false, reason: "wrong_current_password" };
+  }
+  if (input.newPassword.length < MIN_PASSWORD_LENGTH) {
+    return { ok: false, reason: "weak_password" };
+  }
+
+  const passwordHash = await hashPassword(input.newPassword);
+  return db.transaction(async (tx) => {
+    await tx
+      .update(staffUsers)
+      .set({ passwordHash, updatedAt: now })
+      .where(eq(staffUsers.id, session.staff.id));
+    const revokedOtherSessions = await revokeAllSessionsForUser(tx, session.staff.id, now, {
+      exceptSessionId: session.sessionId,
+    });
+    const rotated = await rotateSession(tx, {
+      sessionId: session.sessionId,
+      staffUserId: session.staff.id,
+      ip: input.ip,
+      userAgent: input.userAgent,
+      now,
+    });
+    await tx.insert(auditLog).values({
+      occurredAt: now,
+      actorUserId: session.staff.id,
+      action: "staff.password_change",
+      entityType: "staff_user",
+      entityId: session.staff.id,
+      detail: { revoked_sessions: revokedOtherSessions, session_id: rotated.sessionId },
+    });
+    return {
+      ok: true as const,
+      token: rotated.token,
+      expiresAt: rotated.expiresAt,
+      revokedOtherSessions,
+    };
+  });
+}
+
+/**
+ * Password reset — the staff-admin reset (`PATCH /admin/staff/:id
+ * {password}`) and, later, the emailed-token confirm step both end here.
+ * Every session of the account is revoked: whoever reset it signs in
+ * again with the new password.
+ */
+export async function resetPassword(
+  input: { staffUserId: string; newPassword: string; actorUserId: string | null },
+  deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
+): Promise<{ ok: true; revokedSessions: number } | { ok: false; reason: "weak_password" }> {
+  const { db } = deps;
+  const now = deps.now?.() ?? new Date();
+  if (input.newPassword.length < MIN_PASSWORD_LENGTH) {
+    return { ok: false, reason: "weak_password" };
+  }
+  const passwordHash = await hashPassword(input.newPassword);
+  const revokedSessions = await db.transaction(async (tx) => {
+    await tx
+      .update(staffUsers)
+      .set({ passwordHash, failedLoginCount: 0, lockedUntil: null, updatedAt: now })
+      .where(eq(staffUsers.id, input.staffUserId));
+    const revoked = await revokeAllSessionsForUser(tx, input.staffUserId, now);
+    await tx.insert(auditLog).values({
+      occurredAt: now,
+      actorUserId: input.actorUserId,
+      action: "staff.password_reset",
+      entityType: "staff_user",
+      entityId: input.staffUserId,
+      detail: { revoked_sessions: revoked },
+    });
+    return revoked;
+  });
+  return { ok: true, revokedSessions };
+}
+
+/**
+ * Disable or re-enable a staff account (KBS-24 calls this). Disabling is
+ * effective on the person's very next request through the `is_active`
+ * join in validateSession (AC-ADM-27); the rows are revoked as well, in
+ * the same transaction, so re-enabling never revives a leaver's old
+ * cookies. Accounts are never deleted (audit trail).
+ */
+export async function setStaffActive(
+  input: { staffUserId: string; isActive: boolean; actorUserId: string | null },
+  deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
+): Promise<{ revokedSessions: number }> {
+  const { db } = deps;
+  const now = deps.now?.() ?? new Date();
+  return db.transaction(async (tx) => {
+    await tx
+      .update(staffUsers)
+      .set({ isActive: input.isActive, updatedAt: now })
+      .where(eq(staffUsers.id, input.staffUserId));
+    const revokedSessions = input.isActive
+      ? 0
+      : await revokeAllSessionsForUser(tx, input.staffUserId, now);
+    await tx.insert(auditLog).values({
+      occurredAt: now,
+      actorUserId: input.actorUserId,
+      action: input.isActive ? "staff.enable" : "staff.disable",
+      entityType: "staff_user",
+      entityId: input.staffUserId,
+      detail: { revoked_sessions: revokedSessions },
+    });
+    return { revokedSessions };
+  });
+}
+
+/** "Sign out everywhere" in settings: every session of the caller's account. */
+export async function signOutEverywhere(
+  token: string | undefined | null,
+  deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
+): Promise<boolean> {
+  const { db } = deps;
+  const now = deps.now?.() ?? new Date();
+  const session = await validateSession(db, token, now);
+  if (!session) return false;
+  await db.transaction(async (tx) => {
+    const revoked = await revokeAllSessionsForUser(tx, session.staff.id, now);
+    await tx.insert(auditLog).values({
+      occurredAt: now,
+      actorUserId: session.staff.id,
+      action: "staff.sign_out_everywhere",
+      entityType: "staff_user",
+      entityId: session.staff.id,
+      detail: { revoked_sessions: revoked },
+    });
+  });
+  return true;
 }
