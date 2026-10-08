@@ -53,3 +53,47 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+  integration-tests:
+    name: Integration tests (real Postgres)
+    runs-on: ubuntu-latest
+    services:
+      # Same image as spec/setup's local docker-compose, so CI and a
+      # developer's machine see the same database behaviour.
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: klei
+          POSTGRES_PASSWORD: klei_ci_pw
+          POSTGRES_DB: klei_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U klei"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version comes from package.json "packageManager" (see the job above).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Required: a missing --conditions=react-server flag (env.ts imports
+      # "server-only") fails here rather than on the first deploy.
+      - name: Apply migrations
+        run: pnpm db:migrate
+
+      - name: Seed vocabulary and settings
+        run: pnpm db:seed
+
+      - name: Integration tests
+        run: pnpm test:integration
