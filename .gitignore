@@ -1,0 +1,44 @@
+# Agent working directories (each agent clones into its own sibling folder)
+.work/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Production
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment
+.env
+.env*.local
+.env.local
+
+# Logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Testing
+coverage/
+playwright-report/
+test-results/
+
+# Local data / media (dev-only bind mounts, never committed)
+.data/
+
+# Misc
+*.local
