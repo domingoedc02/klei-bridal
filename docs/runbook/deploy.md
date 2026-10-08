@@ -3,8 +3,8 @@
 Owner: devops (Kwame Asante). Written for `KBS-31-2`. Companion to
 `docs/runbook/dns-records.md` (KBS-34-1) and `docs/runbook/go-live-checklist.md` (KBS-34-2).
 This file owns the Dokploy app configuration, the `kbs-media` named volume, and the
-deploy/rollback procedure — the committed GitHub Actions CI workflow itself is `KBS-31-1`
-(backend-dev's), not duplicated here.
+deploy/rollback procedure. The committed GitHub Actions CI workflow is
+`.github/workflows/ci.yml` (`KBS-31-1`, `KBS-31`) and is not duplicated here.
 
 ## Who runs this
 
@@ -33,6 +33,15 @@ hard gate rather than a suggestion.
    branch, building the committed `Dockerfile` (`KBS-7`) directly on the VPS — no registry
    push needed, `decision/vps-capacity` confirmed the box meets the Dockerfile's build
    requirements (4 vCPU / 8 GB peaks at 2–4 GB during build).
+   - **Build arg:** set `NEXT_PUBLIC_SITE_URL` to the live origin (e.g. `https://<domain>`)
+     as a Dokploy **build argument**, in addition to setting it in the runtime env. It is inlined
+     into the browser bundle at build time, so the runtime value alone does not change it. It is
+     the only build arg, and it is not a secret. No secret is ever a build arg.
+   - **Auto-deploy OFF.** Deploys are triggered manually after migrations have run
+     (section 2). An auto-deploy on merge would start the new code before its migration.
+   - **No host port.** Leave the application's **Ports** list empty. `kbs-web` is reached only
+     through Traefik on the Dokploy network, via the **Domains** tab. A published port would
+     let a visitor bypass Traefik and the TLS and `X-Real-IP` guarantees below.
 2. **Declare `kbs-media` as a Dokploy NAMED VOLUME** — in the application's Volumes/Mounts
    settings, **not** a Dockerfile `VOLUME` instruction and **not** a bind-mount into the build
    context. Mount it at `/data/media` inside the container.
@@ -48,23 +57,81 @@ hard gate rather than a suggestion.
 4. **Confirm Traefik routing** — Dokploy's bundled Traefik v3 holds the route and performs
    automatic Let's Encrypt issuance/renewal once DNS resolves (`docs/runbook/dns-records.md`).
    No TLS configuration happens in this app or this runbook.
+5. **Confirm Traefik overwrites `X-Real-IP`.** The per-IP rate limiter
+   (`src/server/ratelimit/client-ip.ts`) trusts `X-Real-IP` first. Traefik deletes any
+   client-sent `X-Real-IP` / `X-Forwarded-*` and sets its own from the TCP peer, **unless**
+   the entrypoint trusts the sender. So the static config must not trust everyone:
+   ```bash
+   docker exec dokploy-traefik cat /etc/traefik/traefik.yml | grep -n -A4 -i forwardedHeaders
+   # (same file on the host: /etc/dokploy/traefik/traefik.yml)
+   ```
+   Pass condition: no output. Or, under `forwardedHeaders`: no `insecure: true` and no
+   `trustedIPs` entry wider than a known upstream proxy (never `0.0.0.0/0`).
+   - If Cloudflare's **proxied** (orange-cloud) mode is ever switched on, every visitor's
+     `X-Real-IP` becomes a Cloudflare edge IP. Tell devops before enabling it: the rate limiter
+     then needs `trustedIPs` set to Cloudflare's ranges.
+6. **Confirm no host port is published** (after the first deploy):
+   ```bash
+   docker service ls --format '{{.Name}} {{.Ports}}' | grep kbs-web
+   ```
+   Pass condition: the ports column is empty for `kbs-web`. Neither `*:3000->3000/tcp` nor any
+   other `->` may appear.
+
+**Report back:** the raw output of both commands above.
 
 ## 2. Deploy sequence (every time)
 
-1. Confirm CI is green on the commit being deployed (`KBS-31-1`'s GitHub Actions: lint,
-   typecheck, test, e2e, `docker build` verification).
+1. Confirm CI is green on the commit being deployed. The GitHub Actions jobs are lint,
+   typecheck, unit tests, production build, integration tests, e2e, and the `docker build` +
+   container smoke. A red commit never reaches Dokploy.
 2. Confirm any pending migration has been **reviewed as SQL by a second person**
    (`AC-OPS-05` — never trigger a deploy carrying an unreviewed migration).
-3. Trigger the Dokploy deploy (its own webhook on merge to `main`, or manual "Deploy" in the
-   Dokploy UI).
-4. **Apply migrations as an explicit step** before traffic shifts to the new container
-   (`pnpm db:migrate` run once against the new image) — never an implicit `drizzle-kit push`,
-   which is forbidden against production (`spec/setup`).
+3. **Apply migrations as an explicit step, BEFORE the deploy** (section 2a). This ordering is
+   safe only because of the backward-compatible-migration rule (section 5): the
+   still-running previous release must work against the new schema. Never run an implicit
+   `drizzle-kit push`, which is forbidden against production (`spec/setup`).
+4. Trigger the Dokploy deploy manually ("Deploy" in the Dokploy UI; auto-deploy is off).
 5. Dokploy swaps the `kbs-web` container; Traefik begins routing to the new one once its
    healthcheck passes.
 6. **Run the persistent-volume check immediately** — section 3 below. This is not optional
    and not "spot check if you remember."
 7. Smoke-check: homepage, one gown page, `/admin/login`, submit one test enquiry.
+
+### 2a. Running migrations (one-off container)
+
+The runtime image **cannot** migrate: it has no `tsx` and no `drizzle/migrations/*.sql`, by
+design (KBS-7). Migrations run from the Dockerfile's **`builder` stage** as a one-off container
+that exits when done. CI runs exactly this path on every PR, twice in a row, to prove it is
+idempotent (`scripts/ci-docker-smoke.sh`). Run it on the VPS shell, at the commit about to be
+deployed:
+
+```bash
+cd /tmp && rm -rf kbs-src && git clone --depth 1 https://github.com/domingoedc02/klei-bridal kbs-src
+cd kbs-src && git log -1 --format='%h %s'          # must be the commit you are deploying
+docker build --target builder -t kbs-migrate:$(git rev-parse --short HEAD) .
+
+# Same environment as the running app: copy it from the live kbs-web container.
+umask 077
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
+  "$(docker ps -q --filter name=kbs-web | head -1)" > /tmp/kbs.env
+docker run --rm --network dokploy-network --env-file /tmp/kbs.env \
+  kbs-migrate:$(git rev-parse --short HEAD) \
+  node_modules/.bin/tsx --conditions=react-server scripts/migrate.ts
+rm -f /tmp/kbs.env                                 # it holds DATABASE_URL — never leave it
+cd /tmp && rm -rf kbs-src
+```
+
+- The last line before exit must be `Applied N migration(s). Up to date.` or
+  `Already up to date — nothing to apply.`. The exit code must be 0.
+- Any `checksum mismatch` means an already-applied migration file was edited. **Stop.** Do
+  not deploy, and send devops the output.
+- For the **first ever deploy** there is no running `kbs-web` to copy env from. Create
+  `/tmp/kbs.env` by hand from the Dokploy env config (one `KEY=value` per line), then delete
+  it the same way.
+- If the `dokploy-network` name differs, use the network that the Postgres service is on
+  (`docker network ls`).
+
+**Report back:** the `git log -1` line and the full migrate output.
 
 ### Deploy window
 
@@ -91,10 +158,15 @@ docker exec kbs-web find /data/media/derivatives -type f | wc -l
 docker exec kbs-web find /data/media/derivatives -type f | wc -l
 # Must be UNCHANGED, or only grown by exactly what was uploaded since the last deploy.
 # A count that dropped to near-zero = the volume did not persist.
-#   -> Treat as a deploy-blocking incident. Roll back (section 4) immediately,
+#   -> Treat as a deploy-blocking incident. Roll back (section 5) immediately,
 #      then fix the Dokploy volume configuration before redeploying.
 
-# Then verify every row has its full derivative set on disk:
+# Then verify every row has its full derivative set on disk.
+# The runtime image has no pnpm, so this runs in the one-off builder-stage container
+# from section 2a, with the volume mounted and the app's env:
+#   docker run --rm --network dokploy-network --env-file /tmp/kbs.env \
+#     -v kbs-media:/data/media kbs-migrate:<sha> pnpm images:verify
+# (`images:verify` itself lands with KBS-13.)
 pnpm images:verify
 # Must report 0 missing.
 ```
@@ -110,6 +182,13 @@ a report devops can act on — the numbers themselves are the thing being checke
 indistinguishable from a correctly-persisted one — the only way to actually prove persistence
 is two deploys with no image changes in between and zero new encode-queue activity on the
 second.
+
+**What CI already proves, and what it can't.** On every PR, `scripts/ci-docker-smoke.sh` checks
+the image side. It boots the built image twice in a row on one named volume, and confirms that
+a derivative written by the first container is still there for the second. It also fails the
+build if the image ever declares a `VOLUME`. What CI cannot prove is that **Dokploy's app
+config** mounts `kbs-media` at `/data/media`. That lives on the VPS, so the two-deploy proof
+below is still required there.
 
 1. Confirm the catalogue already has generated derivatives (`pnpm images:verify` reports
    0 missing).
