@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { applySecurityHeaders } from "./src/server/pipeline/headers";
+import { applySecurityHeaders, generateNonce } from "./src/server/pipeline/headers";
 import { requestIdOf } from "./src/server/pipeline/request-id";
 
 export const config = {
@@ -19,17 +19,20 @@ export const config = {
  * Security headers come from ONE registry (src/server/pipeline/headers.ts):
  * baseline set + per-route overrides (e.g. /e/*). Pages, media and route
  * handlers all get them here; withPipeline re-applies them to error
- * responses. CSP is KBS-28-2.
+ * responses. CSP (KBS-28-2) is report-only with one nonce per response,
+ * passed to the layout as `x-nonce`.
  */
 export function middleware(request: NextRequest) {
   const requestId = requestIdOf(request.headers);
+  const nonce = generateNonce();
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
+  requestHeaders.set("x-nonce", nonce);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("x-request-id", requestId);
-  applySecurityHeaders(response.headers, request.nextUrl.pathname);
+  applySecurityHeaders(response.headers, request.nextUrl.pathname, { nonce });
 
   return response;
 }
