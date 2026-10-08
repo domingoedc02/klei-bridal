@@ -41,6 +41,12 @@ export interface PipelineOptions {
   rateLimitStore?: () => RateLimitStore;
   report?: Reporter;
   bodyLimits?: BodyLimits;
+  /**
+   * `false` only for a public, stateless sink that browsers POST to without
+   * page JS (CSP reports): it touches no session and anyone can POST it
+   * directly, so a CSRF token proves nothing. Refused on a staff route.
+   */
+  csrf?: false;
   /** Test seam; production uses the DB-backed validator. */
   sessionValidator?: (token: string | undefined) => Promise<Principal | null>;
 }
@@ -98,6 +104,9 @@ export function withPipeline<C>(
   handler: Handler<C>,
   options: PipelineOptions,
 ): (request: NextRequest, context?: C) => Promise<Response> {
+  if (options.csrf === false && options.auth !== "public") {
+    throw new Error("withPipeline: csrf: false is allowed on public routes only");
+  }
   const report = options.report ?? consoleReporter;
 
   return async (request, context) => {
@@ -119,7 +128,7 @@ export function withPipeline<C>(
         ? await options.sessionValidator(request.cookies.get(SESSION_COOKIE)?.value)
         : await validateSession(db, request.cookies.get(SESSION_COOKIE)?.value);
       if (options.auth === "staff") requireStaff(principal);
-      if (isStateChanging(request)) {
+      if (isStateChanging(request) && options.csrf !== false) {
         if (isChannelBeacon(request)) requireSameOrigin(request, true);
         else requireCsrf(request);
       }

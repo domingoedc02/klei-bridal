@@ -107,6 +107,8 @@ export async function cspReportHandler(request: NextRequest): Promise<Response> 
 
 export const POST = withPipeline(cspReportHandler, {
   auth: "public",
+  // Browsers send reports with no page JS, so no x-csrf-token; stateless sink.
+  csrf: false,
   rateLimit: budgets.cspReport,
   bodyLimits: cspReportBodyLimits,
 });

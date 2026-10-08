@@ -201,6 +201,16 @@ describe("withPipeline — session, CSRF and authorization (KBS-11-2)", () => {
     }
   });
 
+  it("csrf: false skips CSRF on a public route and is refused on a staff route", async () => {
+    const bare = new NextRequest(URL_, {
+      method: "POST",
+      body: "{}",
+      headers: { "content-type": "application/json" },
+    });
+    expect((await wrap(ok, { csrf: false }).route(bare)).status).toBe(200);
+    expect(() => wrap(ok, staffOptions({ csrf: false }))).toThrow(/public routes only/);
+  });
+
   it("refuses a forged token and a header that does not match the cookie", async () => {
     const real = mintCsrfToken();
     const forged = `${real.split(".")[0]}.${"A".repeat(43)}`;
