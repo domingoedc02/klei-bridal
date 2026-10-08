@@ -2,16 +2,28 @@ import { unstable_rethrow } from "next/navigation";
 import type { NextRequest } from "next/server";
 import type { Budget } from "../ratelimit/budgets";
 import type { RateLimitStore } from "../ratelimit/store";
-import { SESSION_COOKIE, SESSION_TOKEN_PATTERN } from "../auth/session";
+import { SESSION_COOKIE, SESSION_TOKEN_PATTERN, validateSession } from "../auth/session";
 import { clientIp } from "../ratelimit/client-ip";
 import { defaultBodyLimits, enforceBodyLimit, type BodyLimits } from "./body-limit";
 import { consoleReporter, mapError, type Reporter } from "./error-mapper";
-import { PipelineError } from "./errors";
 import { applySecurityHeaders } from "./headers";
 import { requestIdOf } from "./request-id";
 import { enforceRateLimit } from "./rate-limit";
+import {
+  csrfCookieValue,
+  csrfSetCookie,
+  isChannelBeacon,
+  isStateChanging,
+  mintCsrfToken,
+  requireCsrf,
+  requireSameOrigin,
+} from "./csrf";
+import { requireStaff, type Principal } from "./authorization";
+import { db } from "../db/client";
 
 export { PipelineError, SilentlyDropped } from "./errors";
+export { CSRF_COOKIE, csrfSetCookie, mintCsrfToken } from "./csrf";
+export type { Principal } from "./authorization";
 export { readJson, readMultipart } from "./body-limit";
 export { enforceRateLimit } from "./rate-limit";
 export { requestIdOf } from "./request-id";
@@ -29,6 +41,8 @@ export interface PipelineOptions {
   rateLimitStore?: () => RateLimitStore;
   report?: Reporter;
   bodyLimits?: BodyLimits;
+  /** Test seam; production uses the DB-backed validator. */
+  sessionValidator?: (token: string | undefined) => Promise<Principal | null>;
 }
 
 type Handler<C> = (request: NextRequest, context: C) => Promise<Response> | Response;
@@ -66,6 +80,9 @@ function finalize(response: Response, requestId: string, request: NextRequest): 
     out = new Response(response.body, response);
     out.headers.set("x-request-id", requestId);
   }
+  if (response.status < 400 && !csrfCookieValue(request)) {
+    out.headers.append("set-cookie", csrfSetCookie(mintCsrfToken()));
+  }
   const nonce = request.headers.get("x-nonce") ?? undefined;
   applySecurityHeaders(out.headers, request.nextUrl.pathname, { keepExisting: true, nonce });
   return out;
@@ -98,11 +115,19 @@ export function withPipeline<C>(
         );
       }
 
-      if (options.auth === "staff") {
-        throw new PipelineError(401, "UNAUTHENTICATED", "Please sign in.");
+      const principal = options.sessionValidator
+        ? await options.sessionValidator(request.cookies.get(SESSION_COOKIE)?.value)
+        : await validateSession(db, request.cookies.get(SESSION_COOKIE)?.value);
+      if (options.auth === "staff") requireStaff(principal);
+      if (isStateChanging(request)) {
+        if (isChannelBeacon(request)) requireSameOrigin(request, true);
+        else requireCsrf(request);
       }
 
-      response = await handler(limited, context as C);
+      response = await handler(limited, {
+        ...(context && typeof context === "object" ? context : {}),
+        principal,
+      } as unknown as C);
     } catch (error) {
       // redirect() / notFound() are control flow, not failures.
       unstable_rethrow(error);
