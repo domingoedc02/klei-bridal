@@ -22,6 +22,13 @@ env:
   MAIL_DRY_RUN: "true"
   IMAGE_ORIGINALS_PATH: ./.data/images/originals
   IMAGE_CACHE_PATH: ./.data/images/derivatives
+  # Asia/Manila is assumed, not client-confirmed (KBS-31 open question 3);
+  # it moves together with the deploy window and the lead-time bands.
+  STUDIO_TIMEZONE: Asia/Manila
+  MAIL_WEBHOOK_SIGNING_SECRET: ci-only-webhook-signing-secret-not-real
+  # Deliberately a different inbox from STUDIO_ENQUIRY_EMAIL — alerts and
+  # brides' enquiries must never share one.
+  ALERT_EMAIL: ci-alerts@example.invalid
 
 jobs:
   lint-typecheck-test:
@@ -53,6 +60,12 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+      # Required: `import "server-only"` in src/config/env.ts is enforced
+      # only by the Next bundler, so a client component importing env.ts
+      # fails here and nowhere earlier (KBS-6).
+      - name: Production build
+        run: pnpm build
 
   integration-tests:
     name: Integration tests (real Postgres)
@@ -97,3 +110,63 @@ jobs:
 
       - name: Integration tests
         run: pnpm test:integration
+
+  e2e:
+    name: E2E (phone 390 + laptop 1280)
+    runs-on: ubuntu-latest
+    needs: lint-typecheck-test
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: klei
+          POSTGRES_PASSWORD: klei_ci_pw
+          POSTGRES_DB: klei_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U klei"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+      valkey:
+        image: valkey/valkey:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="valkey-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version comes from package.json "packageManager" (see the first job).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Production build
+        run: pnpm build
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

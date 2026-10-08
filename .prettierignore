@@ -7,3 +7,6 @@ drizzle/migrations
 # Prose runbooks and the handbook are hand-laid-out (wide tables); format
 # checks cover code and config only.
 docs
+test-results
+playwright-report
+blob-report
