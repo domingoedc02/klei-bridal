@@ -3,3 +3,7 @@ node_modules
 pnpm-lock.yaml
 drizzle/migrations
 .data
+
+# Prose runbooks and the handbook are hand-laid-out (wide tables); format
+# checks cover code and config only.
+docs
