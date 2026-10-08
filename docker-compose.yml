@@ -1,0 +1,66 @@
+# LOCAL DEVELOPMENT ONLY (spec/file-structure, spec/setup). Production is
+# Dokploy's job and never reads this file.
+#
+#   docker compose up -d                        Postgres + Valkey; run the app on the host (pnpm dev)
+#   docker compose --profile container up -d    also run the production image (KBS-7) on :3000
+#
+# The dev credentials below are worthless by design — nothing resembling a
+# production credential ever goes in this file.
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: klei
+      POSTGRES_PASSWORD: klei_dev_pw
+      POSTGRES_DB: klei_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - klei_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U klei"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    # Rate-limit counters are disposable: persistence off deliberately.
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    profiles: ["container"]
+    build: .
+    image: kbs-web
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+    ports:
+      - "3000:3000"
+    # Supplied at run time, never at build time. Hosts are the service names.
+    environment:
+      DATABASE_URL: postgresql://klei:klei_dev_pw@postgres:5432/klei_dev
+      REDIS_URL: redis://valkey:6379
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (openssl rand -hex 32)}
+      SITE_URL: http://localhost:3000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      MAIL_PROVIDER_API_KEY: ${MAIL_PROVIDER_API_KEY:-re_local_dry_run}
+      MAIL_FROM_ADDRESS: enquiries@kleibridal.com
+      MAIL_SENDING_DOMAIN: kleibridal.com
+      STUDIO_ENQUIRY_EMAIL: studio@kleibridal.com
+      MAIL_DRY_RUN: "true"
+    # Same mount point Dokploy uses for the production named volume.
+    volumes:
+      - kbs-media:/data/media
+
+volumes:
+  klei_pgdata:
+  kbs-media:
