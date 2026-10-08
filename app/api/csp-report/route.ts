@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { withPipeline } from "@/server/pipeline";
+import { requestIdOf } from "@/server/pipeline/request-id";
 import { budgets } from "@/server/ratelimit/budgets";
 
 const MAX_REPORT_BYTES = 16 * 1024;
@@ -95,7 +96,8 @@ export async function cspReportHandler(request: NextRequest): Promise<Response> 
   const report = sanitizeReport(payload);
   if (!report) return new Response(null, { status: 400 });
   console.info("csp_violation", {
-    request_id: request.headers.get("x-request-id") ?? "unknown",
+    // Same validation as the pipeline: a raw header could inject markup or a huge value into logs.
+    request_id: requestIdOf(request.headers),
     reports: report.reports,
     string_fields: report.stringFields,
     numeric_fields: report.numericFields,

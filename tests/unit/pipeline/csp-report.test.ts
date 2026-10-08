@@ -85,6 +85,26 @@ describe("CSP report sink", () => {
     log.mockRestore();
   });
 
+  it("never logs an unvalidated x-request-id", async () => {
+    // Fetch Headers already refuse CR/LF, so markup and size are what reach the route.
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    for (const hostile of ["<script>alert(1)</script>", "a".repeat(65)]) {
+      const response = await POST(
+        request(JSON.stringify({ "document-uri": "https://example.test" }), undefined, {
+          "x-request-id": hostile,
+        }),
+        options(okStore),
+      );
+      expect(response.status).toBe(200);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(hostile);
+    }
+    const requestIds = log.mock.calls.map(
+      ([, entry]) => (entry as { request_id: string }).request_id,
+    );
+    for (const id of requestIds) expect(id).toMatch(/^[A-Za-z0-9-]{1,64}$/);
+    log.mockRestore();
+  });
+
   it("rejects malformed shape and oversized fields", async () => {
     expect(sanitizeReport({ nope: 1 })).toEqual({
       stringFields: 0,

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { applySecurityHeaders, generateNonce } from "./src/server/pipeline/headers";
+import {
+  applySecurityHeaders,
+  contentSecurityPolicy,
+  CSP_REPORT_ONLY,
+  generateNonce,
+} from "./src/server/pipeline/headers";
 import { requestIdOf } from "./src/server/pipeline/request-id";
 
 export const config = {
@@ -29,6 +34,8 @@ export function middleware(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
   requestHeaders.set("x-nonce", nonce);
+  // Next.js reads the nonce from the request CSP header to nonce its own inline scripts.
+  requestHeaders.set(CSP_REPORT_ONLY, contentSecurityPolicy(nonce));
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("x-request-id", requestId);
