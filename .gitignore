@@ -42,3 +42,8 @@ test-results/
 
 # Misc
 *.local
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
