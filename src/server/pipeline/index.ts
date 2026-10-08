@@ -19,6 +19,9 @@ import {
   requireSameOrigin,
 } from "./csrf";
 import { requireStaff, type Principal } from "./authorization";
+import { readJson } from "./body-limit";
+import { validate } from "./validation";
+import type { ZodTypeAny } from "zod";
 import { db } from "../db/client";
 
 export { PipelineError, SilentlyDropped } from "./errors";
@@ -27,6 +30,7 @@ export type { Principal } from "./authorization";
 export { readJson, readMultipart } from "./body-limit";
 export { enforceRateLimit } from "./rate-limit";
 export { requestIdOf } from "./request-id";
+export { validate } from "./validation";
 
 export interface PipelineOptions {
   /**
@@ -47,6 +51,16 @@ export interface PipelineOptions {
    * directly, so a CSRF token proves nothing. Refused on a staff route.
    */
   csrf?: false;
+  /**
+   * Zod schemas, run after authorization and before the handler (KBS-11-3).
+   * The parsed values reach the handler as `context.body` / `.query` /
+   * `.params`; a failure is 422 VALIDATION_ERROR. Gown ids in a payload are
+   * shape-checked here only — re-check existence and `published` in the
+   * service on every write (decision/favourites-storage).
+   */
+  body?: ZodTypeAny;
+  query?: ZodTypeAny;
+  params?: ZodTypeAny;
   /** Test seam; production uses the DB-backed validator. */
   sessionValidator?: (token: string | undefined) => Promise<Principal | null>;
 }
@@ -96,8 +110,8 @@ function finalize(response: Response, requestId: string, request: NextRequest): 
 
 /**
  * The request chain every route handler runs through (spec/architecture
- * steps 4-11): body limit → rate limit → [session → CSRF → authorization:
- * KBS-11-2] → [validation: KBS-11-3] → handler → error mapper. Security
+ * steps 4-11): body limit → rate limit → session → authorization → CSRF →
+ * validation → handler → error mapper. Security
  * headers and the request id land on EVERY response, error responses included.
  */
 export function withPipeline<C>(
@@ -133,10 +147,18 @@ export function withPipeline<C>(
         else requireCsrf(request);
       }
 
-      response = await handler(limited, {
-        ...(context && typeof context === "object" ? context : {}),
-        principal,
-      } as unknown as C);
+      const base = context && typeof context === "object" ? context : {};
+      const parsed: Record<string, unknown> = {};
+      if (options.body) parsed.body = validate(options.body, await readJson(limited));
+      if (options.query) {
+        // ponytail: a repeated query key keeps its last value; use getAll() in the schema's route if one ever needs arrays.
+        parsed.query = validate(options.query, Object.fromEntries(limited.nextUrl.searchParams));
+      }
+      if (options.params) {
+        parsed.params = validate(options.params, await (base as { params?: unknown }).params);
+      }
+
+      response = await handler(limited, { ...base, principal, ...parsed } as unknown as C);
     } catch (error) {
       // redirect() / notFound() are control flow, not failures.
       unstable_rethrow(error);
