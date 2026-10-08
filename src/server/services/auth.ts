@@ -12,6 +12,7 @@ import { db as defaultDb } from "@/server/db/client";
 import type { Database } from "@/server/db/client";
 import { auditLog, staffUsers } from "@/server/db/schema";
 import type { AttemptStore } from "@/server/ratelimit/attempt-store";
+import { inetOrNull } from "@/server/ratelimit/client-ip";
 import {
   accountLockedUntil,
   clearLoginFailures,
@@ -154,6 +155,7 @@ export async function signIn(
       occurredAt: now,
       actorUserId: usable.id,
       action: "staff.sign_in",
+      ip: inetOrNull(input.ip),
       entityType: "staff_user",
       entityId: usable.id,
       detail: { session_id: created.sessionId },
@@ -176,6 +178,7 @@ export async function signIn(
  */
 export async function signOut(
   token: string | undefined | null,
+  ip: string | null = null,
   deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
 ): Promise<void> {
   const { db } = deps;
@@ -187,6 +190,7 @@ export async function signOut(
       occurredAt: now,
       actorUserId: session.staff.id,
       action: "staff.sign_out",
+      ip: inetOrNull(ip),
       entityType: "staff_user",
       entityId: session.staff.id,
       detail: { session_id: session.sessionId },
@@ -258,6 +262,7 @@ export async function changePassword(
       occurredAt: now,
       actorUserId: session.staff.id,
       action: "staff.password_change",
+      ip: inetOrNull(input.ip),
       entityType: "staff_user",
       entityId: session.staff.id,
       detail: { revoked_sessions: revokedOtherSessions, session_id: rotated.sessionId },
@@ -278,7 +283,12 @@ export async function changePassword(
  * again with the new password.
  */
 export async function resetPassword(
-  input: { staffUserId: string; newPassword: string; actorUserId: string | null },
+  input: {
+    staffUserId: string;
+    newPassword: string;
+    actorUserId: string | null;
+    ip?: string | null;
+  },
   deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
 ): Promise<{ ok: true; revokedSessions: number } | { ok: false; reason: "weak_password" }> {
   const { db } = deps;
@@ -297,6 +307,7 @@ export async function resetPassword(
       occurredAt: now,
       actorUserId: input.actorUserId,
       action: "staff.password_reset",
+      ip: inetOrNull(input.ip),
       entityType: "staff_user",
       entityId: input.staffUserId,
       detail: { revoked_sessions: revoked },
@@ -314,7 +325,7 @@ export async function resetPassword(
  * cookies. Accounts are never deleted (audit trail).
  */
 export async function setStaffActive(
-  input: { staffUserId: string; isActive: boolean; actorUserId: string | null },
+  input: { staffUserId: string; isActive: boolean; actorUserId: string | null; ip?: string | null },
   deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
 ): Promise<{ revokedSessions: number }> {
   const { db } = deps;
@@ -331,6 +342,7 @@ export async function setStaffActive(
       occurredAt: now,
       actorUserId: input.actorUserId,
       action: input.isActive ? "staff.enable" : "staff.disable",
+      ip: inetOrNull(input.ip),
       entityType: "staff_user",
       entityId: input.staffUserId,
       detail: { revoked_sessions: revokedSessions },
@@ -342,6 +354,7 @@ export async function setStaffActive(
 /** "Sign out everywhere" in settings: every session of the caller's account. */
 export async function signOutEverywhere(
   token: string | undefined | null,
+  ip: string | null = null,
   deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
 ): Promise<boolean> {
   const { db } = deps;
@@ -354,6 +367,7 @@ export async function signOutEverywhere(
       occurredAt: now,
       actorUserId: session.staff.id,
       action: "staff.sign_out_everywhere",
+      ip: inetOrNull(ip),
       entityType: "staff_user",
       entityId: session.staff.id,
       detail: { revoked_sessions: revoked },

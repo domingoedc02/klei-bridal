@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, inet, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 import { generateId } from "../uuid";
 import { staffUsers } from "./staff-users";
@@ -22,6 +22,8 @@ export const auditLog = pgTable(
     entityType: text("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
     detail: jsonb("detail").notNull().default({}),
+    /** KBS-62: from clientIp(), via inetOrNull — never a non-IP string. */
+    ip: inet("ip"),
   },
   (table) => [
     index("audit_log_entity_idx").on(table.entityType, table.entityId),
