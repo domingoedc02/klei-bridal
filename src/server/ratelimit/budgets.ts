@@ -67,4 +67,12 @@ export const budgets = {
     failMode: "open",
     onExceeded: "429",
   },
+  cspReport: {
+    name: "csp-report",
+    dimension: "ip",
+    limit: 30,
+    windowSec: 60,
+    failMode: "closed",
+    onExceeded: "429",
+  },
 } as const satisfies Record<string, Budget>;
