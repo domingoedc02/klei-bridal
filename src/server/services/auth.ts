@@ -91,7 +91,12 @@ export async function signIn(
     .where(eq(sql`lower(${staffUsers.email})`, email))
     .limit(1);
 
-  const dbLock = user?.lockedUntil && user.lockedUntil > now ? user.lockedUntil : null;
+  // `staff_users.locked_until` is trusted only while Valkey ALSO holds the
+  // lock. Valkey locks any email, account or not; the row exists only for
+  // real accounts — so honouring the row alone (e.g. after Valkey lost its
+  // keys) would lock real accounts but not unknown emails: an enumeration
+  // oracle. The row still supplies the later end when both exist.
+  const dbLock = storeLock && user?.lockedUntil && user.lockedUntil > now ? user.lockedUntil : null;
   const lock = [storeLock, dbLock].reduce<Date | null>(
     (latest, d) => (d && (!latest || d > latest) ? d : latest),
     null,
@@ -114,8 +119,8 @@ export async function signIn(
       return { ok: false, reason: "unavailable", retryAfterSeconds: UNAVAILABLE_RETRY_SECONDS };
     }
     if (user) {
-      // Durable copy of the lock: it survives a restart of the in-process
-      // store, and is what an admin screen can show and clear.
+      // Durable copy of the lock, for an admin screen to show and clear.
+      // It never locks on its own (see dbLock above).
       await db
         .update(staffUsers)
         .set({

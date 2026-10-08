@@ -36,7 +36,7 @@ export const SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 // 32 bytes → 43 base64url characters, no padding.
-const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+export const SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export function mintSessionToken(): string {
   return randomBytes(32).toString("base64url");
@@ -131,7 +131,7 @@ export async function validateSession(
   token: string | undefined | null,
   now: Date = new Date(),
 ): Promise<ValidSession | null> {
-  if (!token || !TOKEN_PATTERN.test(token)) return null;
+  if (!token || !SESSION_TOKEN_PATTERN.test(token)) return null;
 
   const [row] = await db
     .select({
@@ -196,7 +196,7 @@ export async function revokeSession(
   token: string | undefined | null,
   now: Date = new Date(),
 ): Promise<boolean> {
-  if (!token || !TOKEN_PATTERN.test(token)) return false;
+  if (!token || !SESSION_TOKEN_PATTERN.test(token)) return false;
   const revoked = await db
     .update(sessions)
     .set({ revokedAt: now })

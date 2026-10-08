@@ -3,24 +3,15 @@ import type { NextRequest } from "next/server";
 
 import { SESSION_COOKIE, clearedSessionCookieOptions } from "@/server/auth/session";
 import { signOut } from "@/server/services/auth";
-import { errorResponse, isCrossOrigin, requestIdOf } from "@/server/services/auth-http";
+import { isCrossOrigin } from "@/server/services/auth-http";
+import { PipelineError, withPipeline } from "@/server/pipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * POST /api/auth/logout → 204. Revokes the session ROW first, then clears
- * the cookie: a copy of the cookie taken before sign-out is dead even if
- * this response never reaches the browser. Always 204, signed in or not.
- */
-export async function POST(request: NextRequest) {
+async function handler(request: NextRequest) {
   if (isCrossOrigin(request.headers)) {
-    return errorResponse(
-      403,
-      "FORBIDDEN",
-      "Cross-site request refused.",
-      requestIdOf(request.headers),
-    );
+    throw new PipelineError(403, "FORBIDDEN", "Cross-site request refused.");
   }
 
   await signOut(request.cookies.get(SESSION_COOKIE)?.value);
@@ -30,3 +21,5 @@ export async function POST(request: NextRequest) {
   response.headers.set("cache-control", "no-store");
   return response;
 }
+
+export const POST = withPipeline(handler, { auth: "public", rateLimit: null });

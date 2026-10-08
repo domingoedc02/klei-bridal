@@ -196,15 +196,26 @@ describe("lockout (AC-ADM-29)", () => {
     expect(eleventh.retryAfterSeconds).toBeGreaterThan(0);
     expect(eleventh.retryAfterSeconds).toBeLessThanOrEqual(30 * 60);
 
-    // Durable: the lock is on the row too, so a fresh in-process store
-    // (an app restart) still refuses.
+    // The row keeps a durable copy for the admin screen, but it locks only
+    // while the attempt store also holds the lock: a store that lost its
+    // keys must treat a real account exactly like an unknown email, or the
+    // lockout becomes an enumeration oracle (security-eng, PR #13).
     const [row] = await sql`SELECT locked_until FROM staff_users WHERE id = ${staff.id}`;
     expect(row!.locked_until).not.toBeNull();
-    const afterRestart = await signIn(
-      { email: staff.email, password: PASSWORD, ip: "203.0.113.201", userAgent: null },
-      deps(new MemoryAttemptStore(), () => now),
-    );
-    expect(afterRestart).toMatchObject({ ok: false, reason: "account_locked" });
+    const unknown = `nobody-${randomUUID()}@kleibridal.test`;
+    const lostStore = deps(new MemoryAttemptStore(), () => now);
+    const [real, ghost] = await Promise.all([
+      signIn(
+        { email: staff.email, password: "wrong", ip: "203.0.113.201", userAgent: null },
+        lostStore,
+      ),
+      signIn(
+        { email: unknown, password: "wrong", ip: "203.0.113.203", userAgent: null },
+        lostStore,
+      ),
+    ]);
+    expect(real).toEqual(ghost);
+    expect(real).toMatchObject({ ok: false, reason: "invalid_credentials" });
 
     // Once the backoff has passed, the right password works and resets it.
     now = new Date(now.getTime() + 31 * 60_000);
@@ -220,7 +231,16 @@ describe("lockout (AC-ADM-29)", () => {
 
   it("answers a locked account with 429 ACCOUNT_LOCKED, a clear message and Retry-After", async () => {
     const staff = await makeStaff();
-    await sql`UPDATE staff_users SET locked_until = now() + interval '10 minutes' WHERE id = ${staff.id}`;
+    // Lock it the real way, through the route and the production Valkey store.
+    const attempt = (password: string) =>
+      loginRoute(
+        new NextRequest("http://localhost:3000/api/auth/login", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-real-ip": ip() },
+          body: JSON.stringify({ email: staff.email, password }),
+        }),
+      );
+    for (let i = 0; i < 5; i++) expect((await attempt(`guess-${i}`)).status).toBe(401);
     const res = await loginRoute(
       new NextRequest("http://localhost:3000/api/auth/login", {
         method: "POST",
@@ -229,10 +249,11 @@ describe("lockout (AC-ADM-29)", () => {
       }),
     );
     expect(res.status).toBe(429);
-    expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(500);
+    expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(240);
     const body = await res.json();
     expect(body.error.code).toBe("ACCOUNT_LOCKED");
-    expect(body.error.message).toMatch(/Try again in 10 minutes/);
+    expect(body.error.message).toMatch(/Try again in 5 minutes/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 });
 

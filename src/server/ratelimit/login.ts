@@ -1,5 +1,5 @@
-import { MemoryAttemptStore } from "./attempt-store";
 import type { AttemptStore } from "./attempt-store";
+import { getLoginAttemptStore } from "./valkey-attempt-store";
 
 const MINUTE = 60_000;
 
@@ -23,8 +23,8 @@ export const BACKOFF_CAP_MS = 30 * MINUTE;
 // sign-in clears it at once.
 const LEVEL_TTL_MS = 24 * 60 * MINUTE;
 
-/** Process-wide store until KBS-11-1 lands the Valkey client (see AttemptStore). */
-export const loginAttemptStore: AttemptStore = new MemoryAttemptStore();
+/** Process-wide Valkey store; login remains fail-closed when it is unreachable. */
+export const loginAttemptStore: AttemptStore = getLoginAttemptStore();
 
 export function backoffMs(level: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (level - 1), BACKOFF_CAP_MS);
