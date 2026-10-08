@@ -362,6 +362,19 @@ describe("password reset and sign out everywhere", () => {
     expect(await validateSession(db, token)).not.toBeNull();
   });
 
+  it("rejects a reset password derived from the target staff email", async () => {
+    const staff = await makeStaff();
+    const token = await signedIn(staff);
+    expect(
+      await resetPassword({
+        staffUserId: staff.id,
+        newPassword: "test-staff-long-password!",
+        actorUserId: null,
+      }),
+    ).toEqual({ ok: false, reason: "password_too_common" });
+    expect(await validateSession(db, token)).not.toBeNull();
+  });
+
   it("sign out everywhere revokes every session, including the caller's", async () => {
     const staff = await makeStaff();
     const a = await signedIn(staff);

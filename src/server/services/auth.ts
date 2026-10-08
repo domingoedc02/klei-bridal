@@ -299,7 +299,12 @@ export async function resetPassword(
 > {
   const { db } = deps;
   const now = deps.now?.() ?? new Date();
-  const policy = await assertPasswordAllowed(input.newPassword);
+  const [staff] = await db
+    .select({ email: staffUsers.email })
+    .from(staffUsers)
+    .where(eq(staffUsers.id, input.staffUserId))
+    .limit(1);
+  const policy = await assertPasswordAllowed(input.newPassword, { email: staff?.email });
   if (!policy.ok) return { ok: false, reason: policy.reason };
   const passwordHash = await hashPassword(input.newPassword);
   const revokedSessions = await db.transaction(async (tx) => {
