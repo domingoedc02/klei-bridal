@@ -37,6 +37,9 @@ const eslintConfig = [
       "boundaries/ignore": ["**/*.test.ts", "**/*.test.tsx", "tests/**"],
     },
     rules: {
+      // KBS-11-3: staff text (gown descriptions pasted from Word, the KBS-25
+      // notice every bride sees) renders as text, never as raw HTML.
+      "react/no-danger": "error",
       "boundaries/element-types": [
         "error",
         {
