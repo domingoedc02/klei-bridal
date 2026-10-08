@@ -8,11 +8,21 @@ list is invented — where a line depends on a fact only the client can supply, 
 
 Companion docs: `docs/runbook/dns-records.md` (KBS-34-1) · `docs/runbook/deploy.md` (KBS-31-2).
 
+## Who runs this
+
+**The client retains sole Dokploy and Hostinger access** (`decision/ops-access-and-backup-deferral`) —
+every gate below that needs the Dokploy UI, the VPS, or the client's own accounts (Resend,
+Facebook/Instagram, the domain registrar) is **executed by the client**, with devops providing
+the exact steps and reading the reported result. This is the agreed delivery model, not a
+blocker to escalate past.
+
 ## Status snapshot (keep this line current)
 
-As of this writing: `KBS-31` (pipeline) and `KBS-32` (restore drill) have not started —
-nothing on the technical gates below can be checked yet. This document exists so the
-checklist is agreed and ready to run the moment those land, not written at the last minute.
+As of this writing: `KBS-31` (pipeline) has not started, so nothing on the technical gates
+below can be checked yet. `KBS-32` (restore drill) is **suspended by client decision** (see its
+line below) rather than "not started" — there is nothing currently in progress to wait on
+there, only a decision to revisit before go-live. This document exists so the checklist is
+agreed and ready to run the moment `KBS-31` lands, not written at the last minute.
 
 ## Technical gates
 
@@ -20,12 +30,22 @@ checklist is agreed and ready to run the moment those land, not written at the l
 - [ ] **`KBS-31`'s deploy-twice volume check passed** — the catalogue is not re-encoded on the
       second deploy. See `docs/runbook/deploy.md` → "AC-OPS-01 procedure" for the exact steps.
       **A single deploy is not a valid test of this.**
-- [ ] **`KBS-32`'s restore drill passed, with RPO and RTO actually recorded** (not promised —
-      measured), and the backup confirmed to cover **`kbs-media` as well as Postgres**.
-      ⚠ **BLOCKED today**: backup frequency is unconfirmed (no RPO even in principle), and
-      whether `kbs-media` is in the backup job at all, or only Postgres, is unconfirmed.
-      **Launch blocker** — the gown originals may be the only copy if this isn't true.
-      Owner: devops to chase on `KBS-32`, with the client's Dokploy backup configuration.
+- [ ] **`KBS-32`'s restore drill passed, with RPO and RTO actually recorded.**
+      ⏸ **SUSPENDED by client decision, not an open engineering task.** The client answered,
+      verbatim: *"No Backup, and this is not necessary for now."* (`decision/client-ops-posture`,
+      `decision/ops-access-and-backup-deferral`). `KBS-32` remains plan-approved and in the
+      backlog; **its release gate is suspended at the client's explicit instruction**, not
+      quietly dropped — keeping it as a named line here, checked off only if reinstated, is
+      deliberate: a studio with a live catalogue and real enquiries in December is a different
+      risk position from an empty one today, and this line should be looked at again before
+      go-live, not forgotten because it was unchecked in October.
+      **The consequence, stated plainly and not softened by the word "suspended":** with no
+      backup, the uploaded gown originals have no protection, and originals cannot be
+      regenerated from anything if lost — only derivatives can be rebuilt, from originals.
+      A disk failure with no backup means re-shooting the catalogue. Zero-cost mitigation
+      worth the client hearing again before go-live: **keep the photographer's original files
+      retained off this server** — that alone removes most of the irreversible risk regardless
+      of what the client decides about `KBS-32`.
 - [ ] `KBS-33`'s monitors wired and alerting to a real address, including the first-bounce
       alert on `STUDIO_ENQUIRY_EMAIL`.
       ⚠ **BLOCKED** — `ALERT_EMAIL` is not yet known, and **it must not equal
@@ -71,9 +91,9 @@ today versus what is still waiting on a client fact — **do not fill a ⚠ row 
 | `DATABASE_URL` | ✅ (once Dokploy Postgres service exists) | Dokploy service name, not `localhost` |
 | `REDIS_URL` | ✅ (once Dokploy Valkey service exists) | |
 | `SESSION_SECRET` | ✅ procedure known | Generate fresh with `openssl rand -hex 32` at bring-up time — **never reused from any non-production environment.** Rotating it later signs out every staff member (`KBS-27`) — a deliberate, documented action. |
-| `SITE_URL` / `NEXT_PUBLIC_SITE_URL` | ⚠ BLOCKED | Needs the live domain — `docs/runbook/dns-records.md` |
-| `MAIL_PROVIDER_API_KEY` | ⚠ BLOCKED | Production Resend key, distinct from the dev sandbox key |
-| `MAIL_FROM_ADDRESS` / `MAIL_SENDING_DOMAIN` | ⚠ BLOCKED | Needs the live domain |
+| `SITE_URL` / `NEXT_PUBLIC_SITE_URL` | ⚠ BLOCKED (domain registration in progress — client committed this week) | Needs the live domain — `docs/runbook/dns-records.md` |
+| `MAIL_PROVIDER_API_KEY` | ⚠ BLOCKED | Production Resend key, distinct from the dev sandbox key — can be created as soon as the domain exists, does not itself wait on DNS propagation |
+| `MAIL_FROM_ADDRESS` / `MAIL_SENDING_DOMAIN` | ⚠ BLOCKED (domain registration in progress) | Needs the live domain |
 | `STUDIO_ENQUIRY_EMAIL` | ⚠ BLOCKED | Client fact, not yet supplied |
 | `MAIL_DRY_RUN` | ✅ | `false` in production, always |
 | `MAIL_WEBHOOK_SIGNING_SECRET` | ✅ procedure known | Generate and set **before** webhook registration — `docs/runbook/dns-records.md` step 5 |
@@ -102,5 +122,6 @@ pnpm db:seed:admin
 ## Reference
 
 `spec/setup` · `spec/operations` · `decision/vps-capacity` · `decision/data-residency` ·
+`decision/client-ops-posture` · `decision/ops-access-and-backup-deferral` ·
 `research/metrics` (M2, M8, M9) · `KBS-31`, `KBS-32`, `KBS-33` · `docs/runbook/dns-records.md` ·
 `docs/runbook/deploy.md`.
