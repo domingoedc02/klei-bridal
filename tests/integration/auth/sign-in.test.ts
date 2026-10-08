@@ -272,7 +272,7 @@ describe("sign-out (KBS-27-1)", () => {
     );
     if (!result.ok) throw new Error("sign-in failed");
 
-    await signOut(result.token, { db });
+    await signOut(result.token, null, { db });
 
     const [row] =
       await sql`SELECT revoked_at FROM sessions WHERE token_hash = ${hashSessionToken(result.token)}`;
