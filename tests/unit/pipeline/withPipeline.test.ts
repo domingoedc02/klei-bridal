@@ -6,6 +6,7 @@ import {
   PipelineError,
   readJson,
   readMultipart,
+  mintCsrfToken,
   withPipeline,
   type PipelineOptions,
 } from "../../../src/server/pipeline";
@@ -18,7 +19,7 @@ type NextRequestInit = NonNullable<ConstructorParameters<typeof NextRequest>[1]>
 // 204, fail-closed vs fail-open), error mapper (one envelope, no leaks), and
 // security headers + request id on every response including errors.
 
-const URL_ = "http://localhost/api/probe";
+const URL_ = "http://localhost:3000/api/probe";
 
 function counterStore(): RateLimitStore {
   const counts = new Map<string, number>();
@@ -36,12 +37,35 @@ const downStore: RateLimitStore = {
 };
 
 function post(body: BodyInit | null, headers: Record<string, string> = {}): NextRequest {
+  const csrf = mintCsrfToken();
   return new NextRequest(URL_, {
     method: "POST",
     body,
-    headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.7", ...headers },
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": "203.0.113.7",
+      origin: "http://localhost:3000",
+      cookie: `kbs_csrf=${csrf}`,
+      "x-csrf-token": csrf,
+      ...headers,
+    },
     duplex: "half",
   } as NextRequestInit);
+}
+
+function staffOptions(options: Partial<PipelineOptions> = {}): Partial<PipelineOptions> {
+  return {
+    auth: "staff",
+    sessionValidator: async (token) =>
+      token === "valid-session"
+        ? {
+            sessionId: "session-id",
+            expiresAt: new Date("2030-01-01"),
+            staff: { id: "staff-id", name: "Staff", email: "staff@example.test" },
+          }
+        : null,
+    ...options,
+  };
 }
 
 function streamOf(bytes: number, chunk = 16 * 1024): ReadableStream<Uint8Array> {
@@ -88,7 +112,147 @@ function expectSecurityHeaders(response: Response) {
   expect(response.headers.get("access-control-allow-origin")).toBeNull();
 }
 
-describe("withPipeline — body limit (step 4)", () => {
+describe("withPipeline — session, CSRF and authorization (KBS-11-2)", () => {
+  it("rejects staff without a valid active session", async () => {
+    const handler = vi.fn(ok);
+    const response = await wrap(handler, staffOptions()).route(post("{}"));
+    await expectEnvelope(response, 401, "UNAUTHENTICATED");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("injects an active staff principal into a staff handler", async () => {
+    const handler = vi.fn(((_request: NextRequest, context: { principal: unknown }) =>
+      Response.json(context)) as (request: NextRequest) => Response);
+    const token = "valid-session";
+    const csrf = mintCsrfToken();
+    const response = await wrap(handler, staffOptions()).route(
+      post("{}", {
+        cookie: `kbs_session=${token}; kbs_csrf=${csrf}`,
+        "x-csrf-token": csrf,
+        origin: "http://localhost:3000",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("rejects state-changing requests without CSRF", async () => {
+    const handler = vi.fn(ok);
+    const response = await wrap(handler).route(post("{}", { origin: "http://localhost" }));
+    await expectEnvelope(response, 403, "FORBIDDEN");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid double-submit token", async () => {
+    const token = mintCsrfToken();
+    const handler = vi.fn(ok);
+    const response = await wrap(handler).route(
+      post("{}", {
+        cookie: `kbs_csrf=${token}`,
+        "x-csrf-token": token,
+        origin: "http://localhost:3000",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("rejects cross-site origin and fetch metadata", async () => {
+    const token = mintCsrfToken();
+    for (const headers of [
+      { origin: "https://evil.example", cookie: `kbs_csrf=${token}`, "x-csrf-token": token },
+      { "sec-fetch-site": "cross-site", cookie: `kbs_csrf=${token}`, "x-csrf-token": token },
+    ] as Record<string, string>[]) {
+      const handler = vi.fn(ok);
+      const response = await wrap(handler).route(post("{}", headers));
+      await expectEnvelope(response, 403, "FORBIDDEN");
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
+
+  it("allows channel beacon only with same-origin metadata and no custom header", async () => {
+    const request = new NextRequest("http://localhost:3000/e/link-token/channel", {
+      method: "POST",
+      headers: { origin: "http://localhost:3000", "content-type": "text/plain" },
+      body: "{}",
+    });
+    const handler = vi.fn(ok);
+    const response = await wrap(handler, { rateLimit: null }).route(request);
+    expect(response.status).toBe(200);
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("refuses the channel beacon when Origin is missing", async () => {
+    const request = new NextRequest("http://localhost:3000/e/link-token/channel", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "{}",
+    });
+    const handler = vi.fn(ok);
+    await expectEnvelope(await wrap(handler).route(request), 403, "FORBIDDEN");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed or opaque Origin", async () => {
+    for (const origin of ["null", "not a url", "http://localhost:3000.evil.example"]) {
+      const handler = vi.fn(ok);
+      await expectEnvelope(await wrap(handler).route(post("{}", { origin })), 403, "FORBIDDEN");
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
+
+  it("csrf: false skips CSRF on a public route and is refused on a staff route", async () => {
+    const bare = new NextRequest(URL_, {
+      method: "POST",
+      body: "{}",
+      headers: { "content-type": "application/json" },
+    });
+    expect((await wrap(ok, { csrf: false }).route(bare)).status).toBe(200);
+    expect(() => wrap(ok, staffOptions({ csrf: false }))).toThrow(/public routes only/);
+  });
+
+  it("refuses a forged token and a header that does not match the cookie", async () => {
+    const real = mintCsrfToken();
+    const forged = `${real.split(".")[0]}.${"A".repeat(43)}`;
+    for (const headers of [
+      { cookie: `kbs_csrf=${forged}`, "x-csrf-token": forged },
+      { cookie: `kbs_csrf=${real}`, "x-csrf-token": mintCsrfToken() },
+    ]) {
+      const handler = vi.fn(ok);
+      await expectEnvelope(await wrap(handler).route(post("{}", headers)), 403, "FORBIDDEN");
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
+
+  it("skips CSRF on GET", async () => {
+    const response = await wrap(ok).route(new NextRequest(URL_, { method: "GET" }));
+    expect(response.status).toBe(200);
+  });
+
+  it("issues the CSRF cookie readable by JS, Path=/, SameSite=Lax, Secure outside development", async () => {
+    const response = await wrap(ok).route(new NextRequest(URL_, { method: "GET" }));
+    const cookie = response.headers.get("set-cookie")!;
+    expect(cookie).toMatch(/^kbs_csrf=[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}; /);
+    expect(cookie).toMatch(/; Path=\//);
+    expect(cookie).toMatch(/; SameSite=Lax/);
+    expect(cookie).toMatch(/; Secure/);
+    // The client echoes it into x-csrf-token, so it must not be HttpOnly.
+    expect(cookie).not.toMatch(/HttpOnly/i);
+    expect(cookie).not.toMatch(/Domain=/i);
+  });
+
+  it("does not issue a CSRF cookie on an error response, nor re-issue one already held", async () => {
+    const refused = await wrap(ok).route(post("{}", { cookie: "", "x-csrf-token": "" }));
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("set-cookie")).toBeNull();
+
+    const held = await wrap(ok).route(
+      new NextRequest(URL_, { method: "GET", headers: { cookie: `kbs_csrf=${mintCsrfToken()}` } }),
+    );
+    expect(held.status).toBe(200);
+    expect(held.headers.get("set-cookie")).toBeNull();
+  });
+
   const readsBody = async (request: NextRequest) => Response.json(await readJson(request));
 
   it("413s a JSON body whose Content-Length is over 64KB before reading it", async () => {
@@ -138,10 +302,16 @@ describe("withPipeline — body limit (step 4)", () => {
         form.append("file", new File([new Uint8Array(size)], `g${i}.jpg`, { type: "image/jpeg" }));
       }
       const encoded = new Request(URL_, { method: "POST", body: form });
+      const csrf = mintCsrfToken();
       return new NextRequest(URL_, {
         method: "POST",
         body: encoded.body,
-        headers: { "content-type": encoded.headers.get("content-type") ?? "" },
+        headers: {
+          "content-type": encoded.headers.get("content-type") ?? "",
+          origin: "http://localhost:3000",
+          cookie: `kbs_csrf=${csrf}`,
+          "x-csrf-token": csrf,
+        },
         duplex: "half",
       } as NextRequestInit);
     }
@@ -162,10 +332,16 @@ describe("withPipeline — body limit (step 4)", () => {
     });
 
     it("413s a streamed multipart body over files × per-file cap + framing slack, no Content-Length", async () => {
+      const csrf = mintCsrfToken();
       const request = new NextRequest(URL_, {
         method: "POST",
         body: streamOf(3 * 1024 + 64 * 1024 + 1),
-        headers: { "content-type": "multipart/form-data; boundary=x" },
+        headers: {
+          "content-type": "multipart/form-data; boundary=x",
+          origin: "http://localhost:3000",
+          cookie: `kbs_csrf=${csrf}`,
+          "x-csrf-token": csrf,
+        },
         duplex: "half",
       } as NextRequestInit);
       const response = await wrap(readsForm, { bodyLimits: limits }).route(request);
@@ -380,9 +556,9 @@ describe("withPipeline — headers on every response", () => {
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
   });
 
-  it("401s a staff route until session lookup (KBS-11-2) exists — fails closed", async () => {
+  it("401s a staff route without an active session", async () => {
     const handler = vi.fn(ok);
-    const response = await wrap(handler, { auth: "staff" }).route(post("{}"));
+    const response = await wrap(handler, staffOptions()).route(post("{}"));
     await expectEnvelope(response, 401, "UNAUTHENTICATED");
     expect(handler).not.toHaveBeenCalled();
   });

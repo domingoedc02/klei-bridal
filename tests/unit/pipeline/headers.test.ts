@@ -122,7 +122,11 @@ describe("headers are applied by the shared mechanism", () => {
       { auth: "public", rateLimit: null, report: () => {} },
     );
     const response = await route(
-      new NextRequest("http://localhost/e/tok/channel", { method: "POST" }),
+      // Same-origin: the beacon's Origin check (KBS-11-2) runs before the handler.
+      new NextRequest("http://localhost:3000/e/tok/channel", {
+        method: "POST",
+        headers: { origin: "http://localhost:3000" },
+      }),
       {},
     );
     expect(response.status).toBe(500);

@@ -17,6 +17,7 @@ const okStore: RateLimitStore = {
 
 const options = (rateLimitStore: RateLimitStore): PipelineOptions => ({
   auth: "public",
+  csrf: false,
   rateLimit: budgets.cspReport,
   rateLimitStore: () => rateLimitStore,
   bodyLimits: cspReportBodyLimits,
