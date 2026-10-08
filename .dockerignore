@@ -1,7 +1,17 @@
-# Placeholder — the real multi-stage build exclusions are added by the
-# containerisation task (KBS-7), which also adds the Dockerfile itself.
+# Never send repository metadata, local dependencies, builds or secrets to Docker.
+.git
+.gitignore
 node_modules
 .next
-.git
 .env*
+
+# Tests and reports never belong in a production build context.
+tests
+coverage
+playwright-report
+test-results
+
+# Local image data and development-only seed fixtures can contain large or
+# untrusted files. Production media arrives through the kbs-media volume.
 .data
+drizzle/seed/images
