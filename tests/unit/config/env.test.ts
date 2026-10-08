@@ -44,7 +44,9 @@ describe("src/config/env", () => {
   });
 
   it("boots with a complete, valid development configuration", async () => {
-    setEnv({ NODE_ENV: "development" });
+    // Clear the defaulted variables too, so an ambient value (CI sets
+    // MAIL_DRY_RUN=true) cannot mask the default being asserted.
+    setEnv({ NODE_ENV: "development", MAIL_DRY_RUN: undefined, STUDIO_TIMEZONE: undefined });
     const { env } = await loadEnvModule();
     expect(env.DATABASE_URL).toBe(REQUIRED_BASE.DATABASE_URL);
     expect(env.STUDIO_TIMEZONE).toBe("Asia/Manila"); // default applied

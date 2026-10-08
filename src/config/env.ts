@@ -19,6 +19,9 @@
  * without updating `.env.example` and every `spec/*` reference in the same
  * change.
  */
+// Throws at build time if this module is ever pulled into a client bundle —
+// including a "use client" file under app/, which the zone lint cannot see.
+import "server-only";
 import { z } from "zod";
 
 /** Any `NEXT_PUBLIC_` variable is compiled into the client bundle — never put a secret behind one. */
