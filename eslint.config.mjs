@@ -71,6 +71,12 @@ const eslintConfig = [
                 "src/server/** must never import src/client/** or src/components/** — it drags React/browser code into server-only code, the worker and scripts (spec/file-structure).",
             },
             {
+              from: ["client", "components-ui", "components-public", "components-admin"],
+              disallow: ["config"],
+              message:
+                "src/client/** and src/components/** must never import src/config/** — env.ts holds DATABASE_URL, SESSION_SECRET and the mail keys, and a browser-bundled import publishes them. Pass the value down as a prop from a server component instead (spec/file-structure).",
+            },
+            {
               from: ["components-public"],
               disallow: ["components-admin", "server-db", "server-services", "server-other"],
               message:
