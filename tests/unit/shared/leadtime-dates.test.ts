@@ -108,6 +108,15 @@ describe("enquiryBodySchema", () => {
     expect(parsed.gown_ids).toEqual([id]);
   });
 
+  it("rejects control characters; messages keep line breaks", () => {
+    for (const bad of ["Ana\r\nBcc: x@y.z", "Ana\u0000", "Ana\u001b[31m"]) {
+      expect(enquiryBodySchema.safeParse({ ...base, first_name: bad }).success).toBe(false);
+    }
+    expect(enquiryBodySchema.safeParse({ ...base, message: "hi\u0000" }).success).toBe(false);
+    const ok = enquiryBodySchema.safeParse({ ...base, message: "Line one\r\nLine two\ttab" });
+    expect(ok.success).toBe(true);
+  });
+
   it("rejects HTML in names, malformed ids and over 50 ids (AC-ENQ-19/20)", () => {
     expect(enquiryBodySchema.safeParse({ ...base, first_name: "<b>x</b>" }).success).toBe(false);
     for (const bad of ["' OR 1=1 --", "../../etc/passwd", "x".repeat(1_000_000), null, { a: 1 }]) {

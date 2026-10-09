@@ -22,7 +22,17 @@ import {
  * Unknown keys (a forged `source`, `utm_*`) are stripped by z.object (AC-ENQ-21).
  */
 const noHtml = (v: string) => !/[<>]/.test(v);
-const name = z.string().trim().min(1).max(100).refine(noHtml, "Must not contain < or >.");
+// No control characters: CR/LF in a name would reach mail headers, and NUL makes
+// Postgres raise 22021 (an unmapped 500). Messages keep newlines and tabs.
+const noControl = (v: string) => !/\p{Cc}/u.test(v);
+const noControlButLines = (v: string) => !/[^\P{Cc}\n\r\t]/u.test(v);
+const name = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .refine(noHtml, "Must not contain < or >.")
+  .refine(noControl, "Must not contain control characters.");
 
 export const enquiryBodySchema = z.object({
   first_name: name,
@@ -40,7 +50,11 @@ export const enquiryBodySchema = z.object({
     }, "Enter a phone number, e.g. +63 917 123 4567."),
   email: z.string().trim().max(254).email(),
   wedding_date: z.string().refine(isIsoDate, "Use a date in YYYY-MM-DD form."),
-  message: z.string().max(2000).nullish(),
+  message: z
+    .string()
+    .max(2000)
+    .refine(noControlButLines, "Must not contain control characters.")
+    .nullish(),
   // Zero gowns is a valid enquiry (AC-ENQ-04); 50 is the documented cap (AC-ENQ-19).
   gown_ids: z
     .array(z.string().uuid())
@@ -193,12 +207,13 @@ export async function submitEnquiry(
 
     const band = leadTimeBand(input.wedding_date, today, lead.rule);
     const notice = lead.notice(band);
-    const token = randomBytes(32).toString("base64url");
     const message = input.message?.trim() ? input.message : null;
 
     // A reference collision (30^8 space) is retried, never surfaced as a 409.
     let inserted: { id: string; reference: string } | undefined;
+    let token = "";
     for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+      token = randomBytes(32).toString("base64url");
       [inserted] = await tx
         .insert(enquiries)
         .values({
@@ -217,15 +232,17 @@ export async function submitEnquiry(
           leadTimeBandShown: band,
           leadTimeNoticeShown: notice,
         })
-        .onConflictDoNothing()
+        // Only a reference clash is retried; a token_hash clash must surface.
+        .onConflictDoNothing({ target: enquiries.reference })
         .returning({ id: enquiries.id, reference: enquiries.reference });
     }
     if (!inserted) throw new Error("enquiry reference space exhausted after 3 attempts");
+    const enquiryId = inserted.id;
 
     if (rows.length > 0) {
       await tx.insert(enquiryGowns).values(
         rows.map((g) => ({
-          enquiryId: inserted.id,
+          enquiryId,
           gownId: g.id,
           gownNameSnapshot: g.name,
           // Only a price she could see is a price she saw (decision/pricing-display).

@@ -170,6 +170,15 @@ describe("POST /api/enquiries (KBS-17-1)", () => {
     }
   });
 
+  it("422s (not 500s) on NUL or CRLF and writes nothing", async () => {
+    for (const bad of [{ message: "hi\u0000there" }, { first_name: "Ana\r\nBcc: x@y.z" }]) {
+      const body = input(bad);
+      const res = await post(body);
+      expect(res.status).toBe(422);
+      expect(await rowsFor(body.email)).toHaveLength(0);
+    }
+  });
+
   it("ignores a forged source / utm (AC-ENQ-21)", async () => {
     const body = { ...input(), source: "social", utm_source: "facebook", referrer_host: "x.test" };
     expect((await post(body)).status).toBe(201);
