@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { db as defaultDb, type Database } from "@/server/db/client";
 import { gownImages } from "@/server/db/schema";
 
+import { lockOriginalPath } from "./originalLock";
 import { originalsRoot } from "./contentAddress";
 
 const ORIGINAL = /^(?:[a-f0-9]{2}\/){2}[a-f0-9]{64}\.(?:jpg|jpeg|png|webp|avif)$/i;
@@ -41,20 +42,24 @@ export async function sweepOrphanedOriginals(
   let removed = 0;
   for (const candidate of candidates) {
     const shouldRemove = await database.transaction(async (tx) => {
+      await lockOriginalPath(tx, candidate.relative);
       const references = await tx
         .select({ id: gownImages.id })
         .from(gownImages)
-        .where(eq(gownImages.originalPath, candidate.relative))
-        .for("update");
-      return references.length === 0;
+        .where(eq(gownImages.originalPath, candidate.relative));
+      if (references.length > 0) return false;
+
+      try {
+        await unlink(candidate.absolute);
+        removed++;
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
     });
+
     if (!shouldRemove) continue;
-    try {
-      await unlink(candidate.absolute);
-      removed++;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
   }
   return { scanned: candidates.length, removed };
 }

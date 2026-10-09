@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -36,6 +36,30 @@ afterAll(async () => {
 });
 
 describe("original orphan sweep", () => {
+  it("serializes a concurrent reference before unlink", async () => {
+    const path = "ee/ff/" + "c".repeat(64) + ".jpg";
+    paths.push(path);
+    await mkdir(join(originalsRoot(), "ee/ff"), { recursive: true });
+    await writeFile(join(originalsRoot(), path), "pending");
+    const id = await gown();
+    let sweepDone = false;
+    let sweep!: Promise<void>;
+
+    await sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${path}, 0))`;
+      sweep = sweepOrphanedOriginals(db).then(() => {
+        sweepDone = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(sweepDone).toBe(false);
+      await tx`INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
+        VALUES (${randomUUID()}, ${id}, 0, true, ${path}, 1, 1)`;
+    });
+    await sweep;
+
+    await expect(access(join(originalsRoot(), path))).resolves.toBeUndefined();
+  });
+
   it("keeps a shared original and removes an unreferenced original", async () => {
     const shared = "aa/bb/" + "a".repeat(64) + ".jpg";
     const orphan = "cc/dd/" + "b".repeat(64) + ".jpg";

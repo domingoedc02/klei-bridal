@@ -4,7 +4,8 @@ import { and, count, eq, max } from "drizzle-orm";
 import { env } from "@/config/env";
 import { db as defaultDb, type Database } from "@/server/db/client";
 import { auditLog, gownImages, gowns, imageJobs } from "@/server/db/schema";
-import { storeOriginal } from "@/server/media/contentAddress";
+import { originalPath, storeOriginal } from "@/server/media/contentAddress";
+import { lockOriginalPath } from "@/server/media/originalLock";
 import { sanitizeImage } from "@/server/media/upload";
 import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
@@ -66,18 +67,24 @@ export async function addGownImages(
 
   // Sequential on purpose: ten parallel 40 MP decodes is the memory spike
   // the pixel cap exists to prevent.
-  const stored: { path: string; width: number; height: number }[] = [];
+  const stored: { data: Buffer; ext: string; path: string; width: number; height: number }[] = [];
   for (const file of files) {
     const clean = await sanitizeImage(Buffer.from(await file.arrayBuffer()));
     const ext = clean.format === "jpeg" ? "jpg" : clean.format;
     stored.push({
-      path: await storeOriginal(clean.data, ext),
+      data: clean.data,
+      ext,
+      path: originalPath(clean.data, ext),
       width: clean.width,
       height: clean.height,
     });
   }
 
   return db.transaction(async (tx) => {
+    for (const image of stored) {
+      await lockOriginalPath(tx, image.path);
+      await storeOriginal(image.data, image.ext);
+    }
     // The gown row lock serialises concurrent uploads to one gown, so the
     // count, the next sort_order and the hero choice cannot race.
     const [locked] = await tx
