@@ -354,12 +354,12 @@ describe("merge (KBS-22-2)", () => {
     },
   );
 
-  it("re-points every gown's silhouette and accepts spec/api's into_id", async () => {
+  it("re-points every gown's silhouette", async () => {
     const a = await make("silhouettes");
     const b = await make("silhouettes");
     const moved = [await gown(a), await gown(a)];
 
-    const res = await merge("silhouettes", a, { into_id: b });
+    const res = await merge("silhouettes", a, { target_id: b });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ moved_count: 2 });
     const rows = await sql`SELECT silhouette_id FROM gowns WHERE id = ANY(${moved})`;

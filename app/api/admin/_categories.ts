@@ -36,16 +36,11 @@ export const PatchBody = z.object({
 
 export const Params = z.object({ id: z.string().uuid() });
 
-// CategoryList.tsx sends target_id; spec/api names it into_id. Either works.
-export const MergeBody = z
-  .object({ target_id: z.string().uuid().optional(), into_id: z.string().uuid().optional() })
-  .refine((b) => (b.target_id ?? b.into_id) !== undefined, {
-    message: "Choose the value to merge into.",
-    path: ["target_id"],
-  });
+export const MergeBody = z.object({ target_id: z.string().uuid() });
 
 type IdContext = { params: Promise<{ id: string }>; principal: Principal };
-type MergeContext = IdContext & { body?: z.infer<typeof MergeBody> };
+// mergeOptions.body is set, so the pipeline always hands a validated body.
+type MergeContext = IdContext & { body: z.infer<typeof MergeBody> };
 type CreateContext = { principal: Principal; body?: z.infer<typeof CreateBody> };
 type PatchContext = {
   params: Promise<{ id: string }>;
@@ -123,11 +118,14 @@ export function deleteHandler(type: CategoryType) {
 export function mergeHandler(type: CategoryType) {
   return async (request: NextRequest, context: MergeContext) => {
     const { id } = await context.params;
-    const body = context.body;
-    const target = body?.target_id ?? body?.into_id;
-    if (!target) throw new PipelineError(400, "BAD_REQUEST", "Request body is required.");
     return Response.json(
-      await mergeCategory(type, id, target, context.principal, clientIp(request.headers)),
+      await mergeCategory(
+        type,
+        id,
+        context.body.target_id,
+        context.principal,
+        clientIp(request.headers),
+      ),
     );
   };
 }
