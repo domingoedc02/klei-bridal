@@ -36,7 +36,7 @@ test.describe("enquiry form", () => {
   test("requires date and focuses date", async ({ page }) => {
     await page.goto("/enquire");
     await page.getByRole("button", { name: "Send enquiry" }).click();
-    await expect(page.getByRole("alert")).toContainText("Wedding date is required");
+    await expect(page.getByText("Wedding date is required.", { exact: true })).toBeVisible();
     await expect(page.getByLabel(/Wedding date/)).toBeFocused();
   });
 
