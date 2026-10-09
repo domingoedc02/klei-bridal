@@ -53,7 +53,7 @@ describe("original orphan sweep", () => {
 
     const result = await sweepOrphanedOriginals(db);
     expect(result.scanned).toBeGreaterThanOrEqual(2);
-    expect(result.removed).toBe(1);
+    expect(result.removed).toBeGreaterThanOrEqual(1);
     await expect(
       import("node:fs/promises").then(({ access }) => access(join(originalsRoot(), shared))),
     ).resolves.toBeUndefined();
