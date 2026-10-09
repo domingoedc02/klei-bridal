@@ -11,16 +11,17 @@ const sql = postgres(
   { max: 1 },
 );
 const staffIds: string[] = [];
-const gownIds: string[] = [];
 
+// Keyed on the seeded staff, not on ids the test reached, so a failure
+// mid-test still cleans up. Images and tag links cascade from gowns;
+// price_history restricts, sessions cascade from staff.
 test.afterAll(async () => {
-  if (gownIds.length) {
-    await sql`DELETE FROM price_history WHERE gown_id = ANY(${gownIds})`;
-    await sql`DELETE FROM gowns WHERE id = ANY(${gownIds})`; // images cascade
-  }
   if (staffIds.length) {
+    const gowns = sql`SELECT id FROM gowns WHERE created_by = ANY(${staffIds})`;
+    await sql`DELETE FROM price_history WHERE gown_id IN (${gowns}) OR actor_user_id = ANY(${staffIds})`;
+    await sql`DELETE FROM gowns WHERE created_by = ANY(${staffIds})`;
     await sql`DELETE FROM audit_log WHERE actor_user_id = ANY(${staffIds})`;
-    await sql`DELETE FROM staff_users WHERE id = ANY(${staffIds})`; // sessions cascade
+    await sql`DELETE FROM staff_users WHERE id = ANY(${staffIds})`;
   }
   await sql.end();
 });
@@ -54,10 +55,12 @@ test("draft → publish gate → publish → unpublish, slug locked, all price s
   await page.getByLabel("Name").fill(name);
   await page.getByLabel("Price in pesos").fill("45,000");
   await page.getByRole("button", { name: "Create draft" }).click();
-  await expect(page.getByText("Saved.")).toBeVisible();
+  // Create navigates /new → /:id, which remounts the page, so assert on
+  // the gown loaded back from the server rather than the transient notice.
   await expect(page).toHaveURL(/\/admin\/gowns\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
+  await expect(page.getByLabel("Name")).toHaveValue(name);
   const gownId = page.url().split("/").pop()!;
-  gownIds.push(gownId);
 
   const slug = page.getByLabel("Web address");
   const heading = page.locator("#publish-heading");
