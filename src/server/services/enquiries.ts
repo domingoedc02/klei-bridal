@@ -5,6 +5,11 @@ import { z } from "zod";
 
 import { env } from "@/config/env";
 import { db as defaultDb, type Database } from "@/server/db/client";
+import {
+  dispatchEnquiryEmails,
+  type EnquiryEmailData,
+  type EnquiryMailDeps,
+} from "@/server/mail/enquiry";
 import { enquiries, enquiryGowns, gowns, settings } from "@/server/db/schema";
 import { PipelineError } from "@/server/pipeline/errors";
 import { daysBetween, isIsoDate, isValidTimeZone, todayIn } from "@/shared/dates";
@@ -48,7 +53,12 @@ export const enquiryBodySchema = z.object({
       const digits = v.replace(/\D/g, "").length;
       return digits >= 7 && digits <= 15;
     }, "Enter a phone number, e.g. +63 917 123 4567."),
-  email: z.string().trim().max(254).email(),
+  email: z
+    .string()
+    .trim()
+    .max(254)
+    .email()
+    .refine(noControl, "Email must not contain control characters."),
   wedding_date: z.string().refine(isIsoDate, "Use a date in YYYY-MM-DD form."),
   message: z
     .string()
@@ -141,14 +151,14 @@ async function readLeadTimeSettings(tx: Tx) {
  */
 export async function submitEnquiry(
   input: EnquiryInput,
-  deps: { db?: Database; now?: () => Date } = {},
+  deps: { db?: Database; now?: () => Date; mail?: EnquiryMailDeps } = {},
 ): Promise<EnquiryResult> {
   const db = deps.db ?? defaultDb;
   const email = input.email;
   const gownIds = [...input.gown_ids].sort();
   const dedupeKey = `${email.toLowerCase()}|${gownIds.join(",")}`;
 
-  return db.transaction(async (tx) => {
+  const transactionResult = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${dedupeKey}, 0))`);
 
     const lead = await readLeadTimeSettings(tx);
@@ -177,11 +187,14 @@ export async function submitEnquiry(
       .limit(1);
     if (existing) {
       return {
-        created: false,
-        reference: existing.reference,
-        short_link_url: null,
-        lead_time_band: existing.band as LeadTimeBand,
-        notice_shown: existing.notice || null,
+        result: {
+          created: false,
+          reference: existing.reference,
+          short_link_url: null,
+          lead_time_band: existing.band as LeadTimeBand,
+          notice_shown: existing.notice || null,
+        },
+        mail: null,
       };
     }
 
@@ -254,11 +267,48 @@ export async function submitEnquiry(
     }
 
     return {
-      created: true,
-      reference: inserted.reference,
-      short_link_url: `${env.SITE_URL}/e/${token}`,
-      lead_time_band: band,
-      notice_shown: notice || null,
+      result: {
+        created: true,
+        reference: inserted.reference,
+        short_link_url: `${env.SITE_URL}/e/${token}`,
+        lead_time_band: band,
+        notice_shown: notice || null,
+      },
+      mail: {
+        enquiryId,
+        reference: inserted.reference,
+        shortLinkUrl: `${env.SITE_URL}/e/${token}`,
+        firstName: input.first_name,
+        lastName: input.last_name,
+        contactNumber: input.contact_number,
+        email,
+        weddingDate: input.wedding_date,
+        message,
+        leadTimeBand: band,
+        notice,
+        gowns: rows.map((gown) => ({
+          name: gown.name,
+          priceMinor: gown.priceStatus === "priced" ? gown.priceMinor : null,
+          priceStatus: gown.priceStatus,
+          currency: gown.currency,
+        })),
+      } satisfies EnquiryEmailData,
     };
   });
+
+  // The transaction is complete before either provider call starts. Mail is
+  // deliberately detached from the response path: an outage cannot fail a
+  // stored enquiry or turn a successful submission into a 500.
+  if (transactionResult.result.created && transactionResult.mail) {
+    void dispatchEnquiryEmails(transactionResult.mail, {
+      ...deps.mail,
+      db,
+    }).catch((error: unknown) => {
+      console.error("[mail] enquiry dispatch failed", {
+        enquiryId: transactionResult.mail?.enquiryId,
+        error,
+      });
+    });
+  }
+  return transactionResult.result;
 }

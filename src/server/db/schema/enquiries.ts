@@ -49,6 +49,8 @@ export const enquiries = pgTable(
     leadTimeBandShown: text("lead_time_band_shown").notNull(),
     leadTimeNoticeShown: text("lead_time_notice_shown").notNull(),
     status: text("status").notNull().default("new"),
+    studioEmailStatus: text("studio_email_status").notNull().default("pending"),
+    brideEmailStatus: text("bride_email_status").notNull().default("pending"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -70,5 +72,13 @@ export const enquiries = pgTable(
       sql`${table.leadTimeBandShown} IN ('comfortable', 'rush', 'in_stock_only')`,
     ),
     check("enquiries_status_enum_check", sql`${table.status} IN ('new', 'read', 'archived')`),
+    check(
+      "enquiries_studio_email_status_enum_check",
+      sql`${table.studioEmailStatus} IN ('pending', 'sent', 'failed')`,
+    ),
+    check(
+      "enquiries_bride_email_status_enum_check",
+      sql`${table.brideEmailStatus} IN ('pending', 'sent', 'failed')`,
+    ),
   ],
 );

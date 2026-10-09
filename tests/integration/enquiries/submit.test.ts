@@ -75,6 +75,15 @@ async function rowsFor(email: string) {
   return sql`SELECT * FROM enquiries WHERE email = ${email}`;
 }
 
+async function waitForMailStatuses(email: string) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const [row] = await rowsFor(email);
+    if (row?.studio_email_status === "sent" && row.bride_email_status === "sent") return row;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("enquiry mail statuses did not become sent");
+}
+
 afterAll(async () => {
   await sql`DELETE FROM enquiries WHERE email = ANY(${emails})`;
   await sql`DELETE FROM gowns WHERE id = ANY(${gownIds}::uuid[])`;
@@ -103,6 +112,7 @@ describe("POST /api/enquiries (KBS-17-1)", () => {
     expect(row!.lead_time_notice_shown).toBe(json.notice_shown);
     expect(row!.status).toBe("new");
     expect(row!.contact_number).toBe("+63 917 123 4567");
+    expect((await waitForMailStatuses(body.email)).studio_email_status).toBe("sent");
   });
 
   it("CSRF is enforced", async () => {
@@ -244,6 +254,32 @@ describe("POST /api/enquiries (KBS-17-1)", () => {
       expect(res.status).toBe(422);
       expect(JSON.stringify(await res.json())).not.toContain("<script>");
     }
+  });
+});
+
+describe("post-commit enquiry mail", () => {
+  it("stores both sent statuses without changing the successful response", async () => {
+    const body = input();
+    const res = await post(body);
+    expect(res.status).toBe(201);
+    await expect(waitForMailStatuses(body.email)).resolves.toMatchObject({
+      studio_email_status: "sent",
+      bride_email_status: "sent",
+    });
+  });
+
+  it("does not dispatch mail for a duplicate enquiry", async () => {
+    const body = input();
+    const first = await post(body);
+    const duplicate = await post(body);
+    expect(first.status).toBe(201);
+    expect(duplicate.status).toBe(200);
+    const rows = await rowsFor(body.email);
+    expect(rows).toHaveLength(1);
+    await expect(waitForMailStatuses(body.email)).resolves.toMatchObject({
+      studio_email_status: "sent",
+      bride_email_status: "sent",
+    });
   });
 });
 
