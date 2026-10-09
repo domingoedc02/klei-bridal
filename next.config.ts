@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
   // no `node_modules` copy, no full Next.js install in the final stage.
   output: "standalone",
 
+  outputFileTracingIncludes: { "*": ["src/server/auth/data/common-passwords.txt.gz"] },
+
   outputFileTracingExcludes: {
     // `typescript` is traced in only because Next transpiles this config
     // file; the standalone server inlines the config and never loads it, so

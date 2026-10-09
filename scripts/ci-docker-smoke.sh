@@ -64,6 +64,10 @@ migrate | tail -1 | grep -q "Already up to date" || fail "second migrate run was
 deploy() {
   local name=kbs-ci-web$1-$ID status
   docker run -d --name "$name" --network "$NET" -v "$VOL:/data/media" "${ENV[@]}" "$IMG" >/dev/null
+  docker exec "$name" test -s /app/src/server/auth/data/common-passwords.txt.gz || {
+    docker logs "$name" >&2
+    fail "common password list missing from runtime image"
+  }
   for _ in $(seq 1 40); do
     status=$(docker inspect -f '{{.State.Health.Status}} {{.State.Running}}' "$name")
     [ "$status" = "healthy true" ] && return 0
