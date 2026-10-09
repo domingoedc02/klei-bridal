@@ -10,6 +10,10 @@
 export async function register() {
   try {
     await import("@/config/env");
+    if (!("EdgeRuntime" in globalThis)) {
+      const { startImageWorker } = await import("@/server/worker/imageWorker");
+      startImageWorker();
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     if (!("EdgeRuntime" in globalThis)) process.exit(1);
