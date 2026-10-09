@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // KBS-20-3. The gown admin API (KBS-20-1/20-2) is mocked at the network
-// layer against the spec/api contract, so this proves the UI only.
+// layer here to pin UI-only edge cases (422 keeps typed values, etc.);
+// admin-gowns-real-api.spec.ts runs the same form against the real API.
 
 const draft = {
   id: "0192a000-0000-7000-8000-000000000001",
@@ -20,7 +21,7 @@ const draft = {
 };
 
 async function mockVocab(page: Page) {
-  await page.route("**/api/admin/categories/*", (route) =>
+  await page.route("**/api/admin/{silhouettes,materials,collections}", (route) =>
     route.fulfill({
       json: { items: [{ id: "mat-1", name: "Lace", slug: "lace", gown_count: 0 }] },
     }),

@@ -149,7 +149,7 @@ export default function GownForm({ id }: { id: string | null }) {
     const load = async () => {
       const [silhouettes, materials, collections] = await Promise.all(
         (["silhouettes", "materials", "collections"] as const).map(async (type) => {
-          const response = await fetch(`/api/admin/categories/${type}`);
+          const response = await fetch(`/api/admin/${type}`);
           return response.ok ? ((await response.json()) as { items: Tag[] }).items : [];
         }),
       );
