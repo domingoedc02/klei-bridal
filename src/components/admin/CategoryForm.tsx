@@ -7,6 +7,7 @@ type CategoryType = "silhouettes" | "materials" | "collections";
 type ApiError = {
   message: string;
   suggestion?: { name: string };
+  fields?: Record<string, string>;
 };
 
 export function readCsrfToken(): string | undefined {
@@ -41,6 +42,14 @@ export async function readApiError(response: Response): Promise<ApiError> {
             : `Request failed (${response.status})`,
       suggestion:
         typeof suggestionRecord?.name === "string" ? { name: suggestionRecord.name } : undefined,
+      fields:
+        typeof errorRecord?.fields === "object" && errorRecord.fields !== null
+          ? Object.fromEntries(
+              Object.entries(errorRecord.fields).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            )
+          : undefined,
     };
   } catch {
     return { message: `Request failed (${response.status})` };

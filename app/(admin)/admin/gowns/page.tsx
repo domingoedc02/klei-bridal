@@ -1,10 +1,10 @@
-// Gown list/new/edit + images (upload/reorder/hero). Real implementation:
-// KBS-20, KBS-21.
+import { GownList } from "@/components/admin/GownForm";
+
 export default function AdminGownsPage() {
   return (
-    <main>
+    <main className="admin-page">
       <h1>Gowns</h1>
-      <p>Admin gowns placeholder (KBS-6) — real content lands with KBS-20.</p>
+      <GownList />
     </main>
   );
 }

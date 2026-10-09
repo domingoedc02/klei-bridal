@@ -36,6 +36,9 @@ export default defineConfig({
       "cp -R public .next/standalone/ && cp -R .next/static .next/standalone/.next/ && " +
       `HOSTNAME=127.0.0.1 PORT=${PORT} node .next/standalone/server.js`,
     url: baseURL,
+    // Same-origin check compares Origin to SITE_URL; real-API specs post
+    // from baseURL, so the server must agree on what "same origin" is.
+    env: { SITE_URL: baseURL },
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
