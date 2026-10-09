@@ -9,6 +9,13 @@ import { PipelineError } from "@/server/pipeline/errors";
  */
 export const MAX_INPUT_PIXELS = 40_000_000;
 
+// The web process decodes on the request path: one libvips thread per call
+// and no operation cache, so parallelism comes only from the bounded call
+// sites (the upload loop, IMAGE_WORKER_CONCURRENCY) and never starves the
+// brides being served (decision/images §2.3, devops on PR #30).
+sharp.concurrency(1);
+sharp.cache(false);
+
 export type ImageFormat = "jpeg" | "png" | "webp";
 
 export interface SanitizedImage {
@@ -28,7 +35,7 @@ function reject(message: string, detail?: string): never {
 const ascii = (buf: Buffer, start: number, end: number) => buf.toString("latin1", start, end);
 
 /** The file's own bytes decide its type — never the client's MIME or filename. */
-export function sniff(buf: Buffer): ImageFormat | "heif" | null {
+export function sniff(buf: Buffer): ImageFormat | "heif" | "avif" | null {
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpeg";
   if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) {
     return "png";
@@ -36,7 +43,9 @@ export function sniff(buf: Buffer): ImageFormat | "heif" | null {
   if (buf.length >= 12 && ascii(buf, 0, 4) === "RIFF" && ascii(buf, 8, 12) === "WEBP") {
     return "webp";
   }
-  if (buf.length >= 12 && ascii(buf, 4, 8) === "ftyp") return "heif";
+  if (buf.length >= 12 && ascii(buf, 4, 8) === "ftyp") {
+    return /^avi[fs]$/.test(ascii(buf, 8, 12)) ? "avif" : "heif";
+  }
   return null;
 }
 
@@ -58,7 +67,7 @@ export async function sanitizeImage(buf: Buffer): Promise<SanitizedImage> {
     // HEIC to JPEG on upload; a custom libvips build would lift this.
     reject("HEIC photos are not supported yet. Export the photo as JPEG and upload it again.");
   }
-  if (!sniffed) reject("Upload a JPEG, PNG or WebP photo.");
+  if (!sniffed || sniffed === "avif") reject("Upload a JPEG, PNG or WebP photo.");
 
   let meta: sharp.Metadata;
   try {

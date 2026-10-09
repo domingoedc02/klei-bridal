@@ -10,6 +10,11 @@ import { env } from "@/config/env";
  * chooses every path segment, so a client filename can never reach the disk
  * (no traversal, no overwrite). Stored path is relative to
  * IMAGE_ORIGINALS_PATH: `ab/cd/<64 hex>.<ext>`. Originals are never served.
+ *
+ * SHARED FILES: identical bytes dedupe to ONE file referenced by many
+ * gown_images rows, possibly on different gowns. Image/gown delete and the
+ * orphan sweep must unlink a path only when no gown_images row still names
+ * it, or deleting one gown destroys another's master (security-eng, PR #30).
  */
 export function originalPath(data: Buffer, ext: string): string {
   const hash = createHash("sha256").update(data).digest("hex");
