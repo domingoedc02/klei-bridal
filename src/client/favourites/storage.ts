@@ -20,8 +20,11 @@ function read<T>(key: string, fallback: T, valid: (value: unknown) => value is T
 }
 
 export function getFavouriteIds(): string[] {
-  return read<string[]>(FAVOURITES_KEY, [], (value): value is string[] =>
-    Array.isArray(value) && value.every((id) => typeof id === "string" && id.length <= 100),
+  return read<string[]>(
+    FAVOURITES_KEY,
+    [],
+    (value): value is string[] =>
+      Array.isArray(value) && value.every((id) => typeof id === "string" && id.length <= 100),
   );
 }
 
@@ -38,11 +41,15 @@ export function removeFavourite(id: string): void {
 }
 
 export function getContactDetails(): ContactDetails {
-  return read<ContactDetails>(CONTACT_KEY, { firstName: "", lastName: "", contactNumber: "", email: "" }, (value): value is ContactDetails => {
-    if (typeof value !== "object" || value === null) return false;
-    const record = value as Record<string, unknown>;
-    return ["firstName", "lastName", "contactNumber", "email"].every(
-      (key) => typeof record[key] === "string" && (record[key] as string).length <= 254,
-    );
-  });
+  return read<ContactDetails>(
+    CONTACT_KEY,
+    { firstName: "", lastName: "", contactNumber: "", email: "" },
+    (value): value is ContactDetails => {
+      if (typeof value !== "object" || value === null) return false;
+      const record = value as Record<string, unknown>;
+      return ["firstName", "lastName", "contactNumber", "email"].every(
+        (key) => typeof record[key] === "string" && (record[key] as string).length <= 254,
+      );
+    },
+  );
 }

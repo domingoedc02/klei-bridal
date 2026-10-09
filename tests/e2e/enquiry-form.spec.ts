@@ -4,10 +4,23 @@ test.describe("enquiry form", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem("kbs.favourites.v1", JSON.stringify(["gown-001", "gown-002"]));
-      localStorage.setItem("kbs.contact.v1", JSON.stringify({ firstName: "Maria", lastName: "Santos", contactNumber: "+63 917 123 4567", email: "maria@example.com" }));
+      localStorage.setItem(
+        "kbs.contact.v1",
+        JSON.stringify({
+          firstName: "Maria",
+          lastName: "Santos",
+          contactNumber: "+63 917 123 4567",
+          email: "maria@example.com",
+        }),
+      );
     });
     await page.route("**/api/enquiries", async (route) => {
-      if (route.request().method() === "POST") await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ reference: "ENQ-1" }) });
+      if (route.request().method() === "POST")
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ reference: "ENQ-1" }),
+        });
       else await route.continue();
     });
   });
