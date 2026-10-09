@@ -16,6 +16,9 @@ import { db as defaultDb } from "@/server/db/client";
 import type { Database } from "@/server/db/client";
 import { auditLog, staffUsers } from "@/server/db/schema";
 import type { AttemptStore } from "@/server/ratelimit/attempt-store";
+import { passwordChangedEmail } from "@/server/mail/templates/password-changed";
+import { sendTransactionalEmail } from "@/server/mail/send";
+import { env } from "@/config/env";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
 import {
   accountLockedUntil,
@@ -305,7 +308,7 @@ export async function changePassword(
   }
 
   const passwordHash = await hashPassword(input.newPassword);
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     await tx
       .update(staffUsers)
       .set({ passwordHash, updatedAt: now })
@@ -336,6 +339,31 @@ export async function changePassword(
       revokedOtherSessions,
     };
   });
+
+  try {
+    await sendTransactionalEmail({
+      to: session.staff.email,
+      ...passwordChangedEmail({
+        name: session.staff.name,
+        occurredAt: now,
+        ip: input.ip,
+        userAgent: input.userAgent,
+        timezone: env.STUDIO_TIMEZONE,
+      }),
+    });
+  } catch {
+    await db.insert(auditLog).values({
+      occurredAt: new Date(),
+      actorUserId: session.staff.id,
+      action: "mail.password_changed_failed",
+      ip: inetOrNull(input.ip),
+      entityType: "staff_user",
+      entityId: session.staff.id,
+      detail: { operation: "change" },
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -359,7 +387,7 @@ export async function resetPassword(
   const { db } = deps;
   const now = deps.now?.() ?? new Date();
   const [staff] = await db
-    .select({ email: staffUsers.email })
+    .select({ name: staffUsers.name, email: staffUsers.email })
     .from(staffUsers)
     .where(eq(staffUsers.id, input.staffUserId))
     .limit(1);
@@ -383,6 +411,32 @@ export async function resetPassword(
     });
     return revoked;
   });
+
+  if (staff?.email) {
+    try {
+      await sendTransactionalEmail({
+        to: staff.email,
+        ...passwordChangedEmail({
+          name: staff.name,
+          occurredAt: now,
+          ip: input.ip ?? null,
+          userAgent: null,
+          timezone: env.STUDIO_TIMEZONE,
+        }),
+      });
+    } catch {
+      await db.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: input.actorUserId,
+        action: "mail.password_changed_failed",
+        ip: inetOrNull(input.ip),
+        entityType: "staff_user",
+        entityId: input.staffUserId,
+        detail: { operation: "reset" },
+      });
+    }
+  }
+
   return { ok: true, revokedSessions };
 }
 

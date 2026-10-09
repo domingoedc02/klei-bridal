@@ -9,6 +9,7 @@ export * from "./gowns";
 export * from "./image-jobs";
 export * from "./materials";
 export * from "./price-history";
+export * from "./password-reset-tokens";
 export * from "./sessions";
 export * from "./settings";
 export * from "./silhouettes";

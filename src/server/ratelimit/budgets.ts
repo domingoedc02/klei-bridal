@@ -43,6 +43,22 @@ export const budgets = {
     failMode: "closed",
     onExceeded: "429",
   },
+  passwordResetRequest: {
+    name: "password-reset-request",
+    dimension: "ip",
+    limit: 5,
+    windowSec: 900,
+    failMode: "closed",
+    onExceeded: "429",
+  },
+  passwordResetEmail: {
+    name: "password-reset-email",
+    dimension: "ip",
+    limit: 3,
+    windowSec: 900,
+    failMode: "closed",
+    onExceeded: "429",
+  },
   enquiryLink: {
     name: "enquiry-link",
     dimension: "ip",
