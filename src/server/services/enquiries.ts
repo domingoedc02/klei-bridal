@@ -19,6 +19,7 @@ import {
   leadTimeBand,
   type LeadTimeBand,
   type LeadTimeRule,
+  type LeadTimeSettings,
 } from "@/shared/leadtime";
 
 /**
@@ -106,9 +107,33 @@ function fieldError(field: string, message: string): PipelineError {
   });
 }
 
-type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** Pure: raw settings values to a usable config, falling back per AC-ENQ-15. */
+export function parseLeadTimeSettings(v: Record<string, unknown>): LeadTimeSettings {
+  const weeks = (x: unknown) => (Number.isInteger(x) && (x as number) >= 0 ? (x as number) : null);
+  const comfortable = weeks(v.lead_time_comfortable_weeks);
+  const floor = weeks(v.lead_time_rush_floor_weeks);
+  // A broken pair (missing, or floor above comfortable) falls back whole, never half.
+  const rule: LeadTimeRule =
+    comfortable !== null && floor !== null && floor <= comfortable
+      ? { comfortableWeeks: comfortable, rushFloorWeeks: floor }
+      : DEFAULT_LEAD_TIME_RULE;
+  const tz = v.studio_timezone;
+  const raw = (v.lead_time_notice_copy ?? {}) as Record<string, unknown>;
+  const text = (band: "rush" | "in_stock_only") =>
+    typeof raw[band] === "string" && (raw[band] as string).trim()
+      ? (raw[band] as string)
+      : DEFAULT_NOTICE_COPY[band];
+  return {
+    rule,
+    timeZone: typeof tz === "string" && isValidTimeZone(tz) ? tz : "Asia/Manila",
+    copy: { comfortable: "", rush: text("rush"), in_stock_only: text("in_stock_only") },
+  };
+}
 
-async function readLeadTimeSettings(tx: Tx) {
+/** Lead-time settings for the enquiry page payload and the POST (same source, AC-ENQ-13). */
+export async function getLeadTimeSettings(
+  tx: Pick<Database, "select"> = defaultDb,
+): Promise<LeadTimeSettings> {
   const rows = await tx
     .select({ key: settings.key, value: settings.value })
     .from(settings)
@@ -120,26 +145,7 @@ async function readLeadTimeSettings(tx: Tx) {
         "studio_timezone",
       ]),
     );
-  const v = Object.fromEntries(rows.map((r) => [r.key, r.value])) as Record<string, unknown>;
-  const weeks = (x: unknown) => (Number.isInteger(x) && (x as number) >= 0 ? (x as number) : null);
-  const comfortable = weeks(v.lead_time_comfortable_weeks);
-  const floor = weeks(v.lead_time_rush_floor_weeks);
-  // A broken pair (missing, or floor above comfortable) falls back whole, never half.
-  const rule: LeadTimeRule =
-    comfortable !== null && floor !== null && floor <= comfortable
-      ? { comfortableWeeks: comfortable, rushFloorWeeks: floor }
-      : DEFAULT_LEAD_TIME_RULE;
-  const tz = v.studio_timezone;
-  const copy = (v.lead_time_notice_copy ?? {}) as Record<string, unknown>;
-  return {
-    rule,
-    timeZone: typeof tz === "string" && isValidTimeZone(tz) ? tz : "Asia/Manila",
-    notice(band: LeadTimeBand): string {
-      if (band === "comfortable") return ""; // no notice at 13+ weeks (ADR §2.1)
-      const text = copy[band];
-      return typeof text === "string" && text.trim() ? text : DEFAULT_NOTICE_COPY[band];
-    },
-  };
+  return parseLeadTimeSettings(Object.fromEntries(rows.map((r) => [r.key, r.value])));
 }
 
 /**
@@ -161,7 +167,7 @@ export async function submitEnquiry(
   const transactionResult = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${dedupeKey}, 0))`);
 
-    const lead = await readLeadTimeSettings(tx);
+    const lead = await getLeadTimeSettings(tx);
     const today = todayIn(lead.timeZone, deps.now?.() ?? new Date());
     const days = daysBetween(today, input.wedding_date);
     if (days < 0) throw fieldError("wedding_date", "Choose a date that hasn't passed.");
@@ -219,7 +225,7 @@ export async function submitEnquiry(
     }
 
     const band = leadTimeBand(input.wedding_date, today, lead.rule);
-    const notice = lead.notice(band);
+    const notice = lead.copy[band];
     const message = input.message?.trim() ? input.message : null;
 
     // A reference collision (30^8 space) is retried, never surfaced as a 409.
