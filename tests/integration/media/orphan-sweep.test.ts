@@ -49,6 +49,7 @@ describe("original orphan sweep", () => {
     await sql`INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
       VALUES (${randomUUID()}, ${first}, 0, true, ${shared}, 1, 1),
              (${randomUUID()}, ${second}, 0, true, ${shared}, 1, 1)`;
+    await sql`DELETE FROM gowns WHERE id = ${first}`;
 
     const result = await sweepOrphanedOriginals(db);
     expect(result.scanned).toBeGreaterThanOrEqual(2);
