@@ -126,7 +126,9 @@ export default function EnquiryForm({ leadTime }: { leadTime: LeadTimeSettings }
   }
 
   const notice =
-    dateCheck?.kind === "ok" && dateCheck.band !== "comfortable" ? leadTime.copy[dateCheck.band] : "";
+    dateCheck?.kind === "ok" && dateCheck.band !== "comfortable"
+      ? leadTime.copy[dateCheck.band]
+      : "";
   const dateNote =
     dateCheck?.kind === "past"
       ? "This date has already passed. Choose your wedding date."

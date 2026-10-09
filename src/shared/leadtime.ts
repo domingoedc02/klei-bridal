@@ -47,13 +47,21 @@ export interface LeadTimeSettings {
 
 export type WeddingDateCheck =
   | { kind: "past" }
-  | { kind: "ok"; band: LeadTimeBand; /** >4 years out: confirm the year, never refuse (AC-ENQ-08). */ far: boolean };
+  | {
+      kind: "ok";
+      band: LeadTimeBand;
+      /** >4 years out: confirm the year, never refuse (AC-ENQ-08). */ far: boolean;
+    };
 
 /** ponytail: 4 × 365 + 1 leap day; a calendar-exact year add is not worth it for a "check the year" nudge. */
 const FAR_DAYS = 4 * 365 + 1;
 
 /** What the form says about a date: past is a plain message, the band only ever informs. */
-export function checkWeddingDate(weddingDate: string, today: string, rule: LeadTimeRule): WeddingDateCheck {
+export function checkWeddingDate(
+  weddingDate: string,
+  today: string,
+  rule: LeadTimeRule,
+): WeddingDateCheck {
   const days = daysBetween(today, weddingDate);
   if (days < 0) return { kind: "past" };
   return { kind: "ok", band: leadTimeBand(weddingDate, today, rule), far: days > FAR_DAYS };
