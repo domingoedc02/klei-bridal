@@ -40,6 +40,8 @@ export interface PasswordResetConfirmationDeps {
   sendEmail?: typeof sendTransactionalEmail;
 }
 
+const defaultConfirmationDeps: PasswordResetConfirmationDeps = { db: defaultDb };
+
 export function hashPasswordResetToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -133,7 +135,7 @@ export async function requestPasswordReset(
 
 export async function confirmPasswordReset(
   input: { token: string; newPassword: string; ip: string | null; userAgent: string | null },
-  deps: PasswordResetConfirmationDeps,
+  deps: PasswordResetConfirmationDeps = defaultConfirmationDeps,
 ): Promise<ConfirmPasswordResetResult> {
   const now = deps.now?.() ?? new Date();
   const tokenHash = hashPasswordResetToken(input.token);
