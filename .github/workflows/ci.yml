@@ -121,10 +121,6 @@ jobs:
       - name: Integration tests
         run: pnpm test:integration
 
-      # TEMPORARY (KBS-87): 20x stability proof, removed before merge.
-      - name: KBS-87 sign-in verify test x20
-        run: for i in $(seq 20); do pnpm exec vitest run tests/integration/auth/sign-in.test.ts || exit 1; echo "run $i ok"; done
-
   e2e:
     name: E2E (phone 390 + laptop 1280)
     runs-on: ubuntu-latest
