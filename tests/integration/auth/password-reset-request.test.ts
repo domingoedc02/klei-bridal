@@ -78,6 +78,8 @@ describe("staff password-reset request (KBS-59-1)", () => {
 
     const firstRaw = /token=([^\\s]+)/.exec(sent[0]!.text)![1]!;
     const secondRaw = /token=([^\\s]+)/.exec(sent[1]!.text)![1]!;
+    const firstToken = decodeURIComponent(firstRaw);
+    const secondToken = decodeURIComponent(secondRaw);
     const rows = await sql<
       { token_hash: string; expires_at: Date; used_at: Date | null; revoked_at: Date | null }[]
     >`
@@ -87,9 +89,9 @@ describe("staff password-reset request (KBS-59-1)", () => {
     `;
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.token_hash).toBe(hashPasswordResetToken(decodeURIComponent(firstRaw)));
-    expect(rows[1]!.token_hash).toBe(hashPasswordResetToken(decodeURIComponent(secondRaw)));
-    expect(JSON.stringify(rows)).not.toContain(decodeURIComponent(secondRaw));
+    expect(rows[0]!.token_hash).toBe(hashPasswordResetToken(firstToken));
+    expect(rows[1]!.token_hash).toBe(hashPasswordResetToken(secondToken));
+    expect(JSON.stringify(rows)).not.toContain(secondToken);
     expect(rows[0]!.revoked_at).toEqual(now);
     expect(rows[1]!.revoked_at).toBeNull();
     expect(rows[1]!.expires_at.getTime()).toBe(now.getTime() + PASSWORD_RESET_TOKEN_TTL_MS);
