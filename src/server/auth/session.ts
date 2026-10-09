@@ -192,7 +192,7 @@ export async function touchSession(db: DbOrTx, sessionId: string, now: Date): Pr
  * working even if the browser never receives the clearing response.
  */
 export async function revokeSession(
-  db: Database,
+  db: DbOrTx,
   token: string | undefined | null,
   now: Date = new Date(),
 ): Promise<boolean> {

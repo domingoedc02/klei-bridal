@@ -66,11 +66,21 @@ async function handler(request: NextRequest) {
         throw new PipelineError(422, "PASSWORD_TOO_COMMON", "Choose a less common password.", {
           fields: { new_password: "Choose a less common password." },
         });
+      case "too_many_attempts": {
+        const minutes = Math.ceil(result.retryAfterSeconds / 60);
+        throw new PipelineError(
+          429,
+          "TOO_MANY_ATTEMPTS",
+          `Too many wrong current passwords. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+          { retryAfterSec: result.retryAfterSeconds },
+        );
+      }
       case "unavailable":
         throw new PipelineError(
           503,
           "SERVICE_UNAVAILABLE",
-          "Password policy is temporarily unavailable.",
+          "Password change is temporarily unavailable. Try again shortly.",
+          { retryAfterSec: 30 },
         );
     }
   }
