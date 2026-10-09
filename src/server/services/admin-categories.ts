@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql, type SQL } from "drizzle-orm";
 
 import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
@@ -20,7 +20,8 @@ import { slugify } from "@/shared/slug";
  * KBS-22-1: list / create / rename for the three editable vocabularies
  * (spec/api → Admin — categories). `type` only ever comes from the route
  * file's own literal, mapped here to a fixed table — never a path segment
- * turned into an identifier. Merge and the delete-in-use guard are KBS-22-2.
+ * turned into an identifier. KBS-22-2 adds delete (refused while in use)
+ * and merge.
  */
 export type CategoryType = "silhouettes" | "materials" | "collections";
 
@@ -176,8 +177,9 @@ export async function createCategory(
 /**
  * Rename and tidy fields. The slug stays put: collections back public
  * landing URLs (KBS-10).
- * ponytail: no slug redirect table yet — add one with KBS-22-2's merge
- * ("keep slug as a redirect") if renames must also move the URL.
+ * ponytail: no slug redirect table — renames and merges drop the old URL.
+ * Add `category_slug_redirects` (migration 0007) once a public page serves
+ * vocab slugs that must survive a rename or merge.
  */
 export async function updateCategory(
   type: CategoryType,
@@ -221,5 +223,117 @@ export async function updateCategory(
     }
     const [row] = await tx.select({ row: t, gownCount: usage() }).from(t).where(eq(t.id, id));
     return present(row!.row, Number(row!.gownCount));
+  });
+}
+
+/**
+ * KBS-22-2: delete a value no gown uses. In use answers `{ inUse }` so the
+ * handler can offer merge or deactivate; the FK's ON DELETE RESTRICT still
+ * refuses a gown tagged between the count and the delete (23503 → 409).
+ */
+export async function deleteCategory(
+  type: CategoryType,
+  id: string,
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+): Promise<{ deleted: true } | { inUse: number }> {
+  const { table: t, entity, usage } = config(type);
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ name: t.name, slug: t.slug })
+      .from(t)
+      .where(eq(t.id, id))
+      .for("update");
+    if (!row) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
+    const [count] = await tx.select({ n: usage() }).from(t).where(eq(t.id, id));
+    const inUse = Number(count!.n);
+    if (inUse > 0) return { inUse };
+
+    await tx.delete(t).where(eq(t.id, id));
+    await tx.insert(auditLog).values({
+      occurredAt: new Date(),
+      actorUserId: actor.staff.id,
+      action: `${entity}.delete`,
+      entityType: entity,
+      entityId: id,
+      detail: { name: row.name, slug: row.slug },
+      ip: inetOrNull(ip),
+    });
+    return { deleted: true as const };
+  });
+}
+
+/** Re-points every gown from `source` to `target`; returns the gowns moved. */
+async function repoint(tx: DbOrTx, type: CategoryType, source: string, target: string) {
+  if (type === "silhouettes") {
+    const moved = await tx
+      .update(gowns)
+      .set({ silhouetteId: target })
+      .where(eq(gowns.silhouetteId, source))
+      .returning({ id: gowns.id });
+    return moved.length;
+  }
+  // A gown tagged with both keeps exactly one target row (composite PK).
+  const link = type === "materials" ? gownMaterials : gownCollections;
+  const col = type === "materials" ? gownMaterials.materialId : gownCollections.collectionId;
+  await tx.execute(sql`
+    insert into ${link} (gown_id, ${sql.raw(col.name)})
+    select gown_id, ${target} from ${link} where ${col} = ${source}
+    on conflict do nothing
+  `);
+  const moved = await tx.delete(link).where(eq(col, source)).returning({ id: link.gownId });
+  return moved.length;
+}
+
+/**
+ * KBS-22-2: merge `id` into `targetId` in one transaction — re-point gowns,
+ * delete the source, one audit row. Both rows are locked in id order, so
+ * two concurrent merges of the same pair serialise instead of deadlocking;
+ * the loser then finds its source gone (404).
+ */
+export async function mergeCategory(
+  type: CategoryType,
+  id: string,
+  targetId: string,
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+) {
+  if (id === targetId) {
+    throw new PipelineError(422, "VALIDATION_ERROR", "A value cannot be merged into itself.", {
+      fields: { target_id: "Choose a different value." },
+    });
+  }
+  const { table: t, entity } = config(type);
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: t.id, name: t.name, slug: t.slug })
+      .from(t)
+      .where(inArray(t.id, [id, targetId]))
+      .orderBy(asc(t.id))
+      .for("update");
+    const source = rows.find((r) => r.id === id);
+    const target = rows.find((r) => r.id === targetId);
+    if (!source || !target) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
+
+    const movedCount = await repoint(tx, type, id, targetId);
+    await tx.delete(t).where(eq(t.id, id));
+    await tx.insert(auditLog).values({
+      occurredAt: new Date(),
+      actorUserId: actor.staff.id,
+      action: `${entity}.merge`,
+      entityType: entity,
+      entityId: targetId,
+      detail: {
+        source_id: id,
+        source_name: source.name,
+        source_slug: source.slug,
+        target_id: targetId,
+        moved_count: movedCount,
+      },
+      ip: inetOrNull(ip),
+    });
+    return { moved_count: movedCount };
   });
 }
