@@ -23,8 +23,8 @@ function escapeHtml(value: string): string {
 function approximateIp(ip: string | null): string {
   if (!ip || isIP(ip) === 0) return "unknown";
   if (ip.includes(":")) {
-    const parts = ip.split(":");
-    return `${parts.slice(0, 3).join(":")}::/48`;
+    const prefix = ip.split("::", 1)[0]!.split(":").filter(Boolean).slice(0, 3).join(":");
+    return `${prefix}::/48`;
   }
   const parts = ip.split(".");
   return `${parts.slice(0, 3).join(".")}.0/24`;
