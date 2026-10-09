@@ -4,10 +4,18 @@ import { FormEvent, useEffect, useState } from "react";
 
 export default function AdminResetPasswordPage() {
   const [token, setToken] = useState("");
+  const [csrfReady, setCsrfReady] = useState(false);
 
   useEffect(() => {
     setToken(new URLSearchParams(window.location.search).get("token") ?? "");
-    void fetch("/api/auth/password-reset/confirm", { cache: "no-store" });
+    void fetch("/api/auth/password-reset/confirm", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not prepare password reset.");
+        setCsrfReady(true);
+      })
+      .catch((cause) =>
+        setError(cause instanceof Error ? cause.message : "Could not prepare password reset."),
+      );
   }, []);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -81,7 +89,7 @@ export default function AdminResetPasswordPage() {
           onChange={(event) => setConfirmation(event.target.value)}
           required
         />
-        <button type="submit" disabled={pending || !token}>
+        <button type="submit" disabled={pending || !token || !csrfReady}>
           {pending ? "Saving…" : "Set password"}
         </button>
         {error ? <p role="alert">{error}</p> : null}
