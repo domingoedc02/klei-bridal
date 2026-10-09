@@ -76,8 +76,8 @@ describe("staff password-reset request (KBS-59-1)", () => {
     await requestPasswordReset({ email: staff.email }, deps);
     expect(sent).toHaveLength(2);
 
-    const firstRaw = /token=([^\\s]+)/.exec(sent[0]!.text)![1]!;
-    const secondRaw = /token=([^\\s]+)/.exec(sent[1]!.text)![1]!;
+    const firstRaw = /token=([^\s]+)/.exec(sent[0]!.text)![1]!;
+    const secondRaw = /token=([^\s]+)/.exec(sent[1]!.text)![1]!;
     const firstToken = decodeURIComponent(firstRaw);
     const secondToken = decodeURIComponent(secondRaw);
     const rows = await sql<

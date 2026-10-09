@@ -5,6 +5,11 @@ import { z } from "zod";
 
 import { env } from "@/config/env";
 import { db as defaultDb, type Database } from "@/server/db/client";
+import {
+  dispatchEnquiryEmails,
+  type EnquiryEmailData,
+  type EnquiryMailDeps,
+} from "@/server/mail/enquiry";
 import { enquiries, enquiryGowns, gowns, settings } from "@/server/db/schema";
 import { PipelineError } from "@/server/pipeline/errors";
 import { daysBetween, isIsoDate, isValidTimeZone, todayIn } from "@/shared/dates";
@@ -14,6 +19,7 @@ import {
   leadTimeBand,
   type LeadTimeBand,
   type LeadTimeRule,
+  type LeadTimeSettings,
 } from "@/shared/leadtime";
 
 /**
@@ -48,7 +54,12 @@ export const enquiryBodySchema = z.object({
       const digits = v.replace(/\D/g, "").length;
       return digits >= 7 && digits <= 15;
     }, "Enter a phone number, e.g. +63 917 123 4567."),
-  email: z.string().trim().max(254).email(),
+  email: z
+    .string()
+    .trim()
+    .max(254)
+    .email()
+    .refine(noControl, "Email must not contain control characters."),
   wedding_date: z.string().refine(isIsoDate, "Use a date in YYYY-MM-DD form."),
   message: z
     .string()
@@ -96,9 +107,33 @@ function fieldError(field: string, message: string): PipelineError {
   });
 }
 
-type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** Pure: raw settings values to a usable config, falling back per AC-ENQ-15. */
+export function parseLeadTimeSettings(v: Record<string, unknown>): LeadTimeSettings {
+  const weeks = (x: unknown) => (Number.isInteger(x) && (x as number) >= 0 ? (x as number) : null);
+  const comfortable = weeks(v.lead_time_comfortable_weeks);
+  const floor = weeks(v.lead_time_rush_floor_weeks);
+  // A broken pair (missing, or floor above comfortable) falls back whole, never half.
+  const rule: LeadTimeRule =
+    comfortable !== null && floor !== null && floor <= comfortable
+      ? { comfortableWeeks: comfortable, rushFloorWeeks: floor }
+      : DEFAULT_LEAD_TIME_RULE;
+  const tz = v.studio_timezone;
+  const raw = (v.lead_time_notice_copy ?? {}) as Record<string, unknown>;
+  const text = (band: "rush" | "in_stock_only") =>
+    typeof raw[band] === "string" && (raw[band] as string).trim()
+      ? (raw[band] as string)
+      : DEFAULT_NOTICE_COPY[band];
+  return {
+    rule,
+    timeZone: typeof tz === "string" && isValidTimeZone(tz) ? tz : "Asia/Manila",
+    copy: { comfortable: "", rush: text("rush"), in_stock_only: text("in_stock_only") },
+  };
+}
 
-async function readLeadTimeSettings(tx: Tx) {
+/** Lead-time settings for the enquiry page payload and the POST (same source, AC-ENQ-13). */
+export async function getLeadTimeSettings(
+  tx: Pick<Database, "select"> = defaultDb,
+): Promise<LeadTimeSettings> {
   const rows = await tx
     .select({ key: settings.key, value: settings.value })
     .from(settings)
@@ -110,26 +145,7 @@ async function readLeadTimeSettings(tx: Tx) {
         "studio_timezone",
       ]),
     );
-  const v = Object.fromEntries(rows.map((r) => [r.key, r.value])) as Record<string, unknown>;
-  const weeks = (x: unknown) => (Number.isInteger(x) && (x as number) >= 0 ? (x as number) : null);
-  const comfortable = weeks(v.lead_time_comfortable_weeks);
-  const floor = weeks(v.lead_time_rush_floor_weeks);
-  // A broken pair (missing, or floor above comfortable) falls back whole, never half.
-  const rule: LeadTimeRule =
-    comfortable !== null && floor !== null && floor <= comfortable
-      ? { comfortableWeeks: comfortable, rushFloorWeeks: floor }
-      : DEFAULT_LEAD_TIME_RULE;
-  const tz = v.studio_timezone;
-  const copy = (v.lead_time_notice_copy ?? {}) as Record<string, unknown>;
-  return {
-    rule,
-    timeZone: typeof tz === "string" && isValidTimeZone(tz) ? tz : "Asia/Manila",
-    notice(band: LeadTimeBand): string {
-      if (band === "comfortable") return ""; // no notice at 13+ weeks (ADR §2.1)
-      const text = copy[band];
-      return typeof text === "string" && text.trim() ? text : DEFAULT_NOTICE_COPY[band];
-    },
-  };
+  return parseLeadTimeSettings(Object.fromEntries(rows.map((r) => [r.key, r.value])));
 }
 
 /**
@@ -141,17 +157,17 @@ async function readLeadTimeSettings(tx: Tx) {
  */
 export async function submitEnquiry(
   input: EnquiryInput,
-  deps: { db?: Database; now?: () => Date } = {},
+  deps: { db?: Database; now?: () => Date; mail?: EnquiryMailDeps } = {},
 ): Promise<EnquiryResult> {
   const db = deps.db ?? defaultDb;
   const email = input.email;
   const gownIds = [...input.gown_ids].sort();
   const dedupeKey = `${email.toLowerCase()}|${gownIds.join(",")}`;
 
-  return db.transaction(async (tx) => {
+  const transactionResult = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${dedupeKey}, 0))`);
 
-    const lead = await readLeadTimeSettings(tx);
+    const lead = await getLeadTimeSettings(tx);
     const today = todayIn(lead.timeZone, deps.now?.() ?? new Date());
     const days = daysBetween(today, input.wedding_date);
     if (days < 0) throw fieldError("wedding_date", "Choose a date that hasn't passed.");
@@ -177,11 +193,14 @@ export async function submitEnquiry(
       .limit(1);
     if (existing) {
       return {
-        created: false,
-        reference: existing.reference,
-        short_link_url: null,
-        lead_time_band: existing.band as LeadTimeBand,
-        notice_shown: existing.notice || null,
+        result: {
+          created: false,
+          reference: existing.reference,
+          short_link_url: null,
+          lead_time_band: existing.band as LeadTimeBand,
+          notice_shown: existing.notice || null,
+        },
+        mail: null,
       };
     }
 
@@ -206,7 +225,7 @@ export async function submitEnquiry(
     }
 
     const band = leadTimeBand(input.wedding_date, today, lead.rule);
-    const notice = lead.notice(band);
+    const notice = lead.copy[band];
     const message = input.message?.trim() ? input.message : null;
 
     // A reference collision (30^8 space) is retried, never surfaced as a 409.
@@ -254,11 +273,48 @@ export async function submitEnquiry(
     }
 
     return {
-      created: true,
-      reference: inserted.reference,
-      short_link_url: `${env.SITE_URL}/e/${token}`,
-      lead_time_band: band,
-      notice_shown: notice || null,
+      result: {
+        created: true,
+        reference: inserted.reference,
+        short_link_url: `${env.SITE_URL}/e/${token}`,
+        lead_time_band: band,
+        notice_shown: notice || null,
+      },
+      mail: {
+        enquiryId,
+        reference: inserted.reference,
+        shortLinkUrl: `${env.SITE_URL}/e/${token}`,
+        firstName: input.first_name,
+        lastName: input.last_name,
+        contactNumber: input.contact_number,
+        email,
+        weddingDate: input.wedding_date,
+        message,
+        leadTimeBand: band,
+        notice,
+        gowns: rows.map((gown) => ({
+          name: gown.name,
+          priceMinor: gown.priceStatus === "priced" ? gown.priceMinor : null,
+          priceStatus: gown.priceStatus,
+          currency: gown.currency,
+        })),
+      } satisfies EnquiryEmailData,
     };
   });
+
+  // The transaction is complete before either provider call starts. Mail is
+  // deliberately detached from the response path: an outage cannot fail a
+  // stored enquiry or turn a successful submission into a 500.
+  if (transactionResult.result.created && transactionResult.mail) {
+    void dispatchEnquiryEmails(transactionResult.mail, {
+      ...deps.mail,
+      db,
+    }).catch((error: unknown) => {
+      console.error("[mail] enquiry dispatch failed", {
+        enquiryId: transactionResult.mail?.enquiryId,
+        error,
+      });
+    });
+  }
+  return transactionResult.result;
 }

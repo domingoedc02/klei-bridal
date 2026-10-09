@@ -36,3 +36,33 @@ export function leadTimeBand(weddingDate: string, today: string, rule: LeadTimeR
   if (days > rule.rushFloorWeeks * 7) return "rush";
   return "in_stock_only";
 }
+
+/** The enquiry page payload: one settings source for page and POST (AC-ENQ-13). */
+export interface LeadTimeSettings {
+  rule: LeadTimeRule;
+  timeZone: string;
+  /** Notice text per band; `comfortable` is always "" (no notice, ADR §2.1). */
+  copy: Record<LeadTimeBand, string>;
+}
+
+export type WeddingDateCheck =
+  | { kind: "past" }
+  | {
+      kind: "ok";
+      band: LeadTimeBand;
+      /** >4 years out: confirm the year, never refuse (AC-ENQ-08). */ far: boolean;
+    };
+
+/** ponytail: 4 × 365 + 1 leap day; a calendar-exact year add is not worth it for a "check the year" nudge. */
+const FAR_DAYS = 4 * 365 + 1;
+
+/** What the form says about a date: past is a plain message, the band only ever informs. */
+export function checkWeddingDate(
+  weddingDate: string,
+  today: string,
+  rule: LeadTimeRule,
+): WeddingDateCheck {
+  const days = daysBetween(today, weddingDate);
+  if (days < 0) return { kind: "past" };
+  return { kind: "ok", band: leadTimeBand(weddingDate, today, rule), far: days > FAR_DAYS };
+}
