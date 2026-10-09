@@ -131,20 +131,23 @@ describe("no user enumeration, including timing", () => {
 
   it("runs a full argon2id verify for an unknown email (no short-circuit)", async () => {
     const staff = await makeStaff();
-    const time = async (email: string) => {
-      const samples: number[] = [];
-      for (let i = 0; i < 5; i++) {
+    const unknownEmail = `nobody-${randomUUID()}@kleibridal.test`;
+    const samples = { wrongPassword: [] as number[], unknownEmail: [] as number[] };
+    for (let i = 0; i < 5; i++) {
+      for (const [label, email] of [
+        ["wrongPassword", staff.email],
+        ["unknownEmail", unknownEmail],
+      ] as const) {
         const t0 = performance.now();
         await signIn({ email, password: "wrong", ip: ip(), userAgent: null }, deps());
-        samples.push(performance.now() - t0);
+        samples[label].push(performance.now() - t0);
       }
-      return samples.sort((x, y) => x - y)[2]!;
-    };
-    const wrongPassword = await time(staff.email);
-    const unknownEmail = await time(`nobody-${randomUUID()}@kleibridal.test`);
+    }
+    const wrongPassword = samples.wrongPassword.sort((x, y) => x - y)[2]!;
+    const unknownEmailTime = samples.unknownEmail.sort((x, y) => x - y)[2]!;
     // A short-circuit would be ~1 ms against tens of ms for argon2id; the
     // bound is loose on purpose so a noisy CI runner cannot flake it.
-    expect(unknownEmail).toBeGreaterThan(wrongPassword * 0.5);
+    expect(unknownEmailTime).toBeGreaterThan(wrongPassword * 0.5);
   });
 
   it("returns the same 401 body from the route for an unknown email and a wrong password", async () => {
