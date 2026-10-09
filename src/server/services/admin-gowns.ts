@@ -372,18 +372,24 @@ export async function deleteAdminGown(id: string, actor: Principal, db: Database
       .where(eq(gowns.id, id))
       .limit(1);
     if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+    if (row.status === "published")
+      throw new PipelineError(409, "CONFLICT", "Published gowns cannot be deleted.");
+    if (row.status === "archived")
+      throw new PipelineError(
+        409,
+        "CONFLICT",
+        "Archived gowns can only be restored or deleted by policy.",
+      );
+
     const now = new Date();
-    await tx
-      .update(gowns)
-      .set({ status: "archived", updatedBy: actor.staff.id, updatedAt: now })
-      .where(eq(gowns.id, id));
     await tx.insert(auditLog).values({
       occurredAt: now,
       actorUserId: actor.staff.id,
-      action: "gown.archive",
+      action: "gown.delete",
       entityType: "gown",
       entityId: id,
       detail: {},
     });
+    await tx.delete(gowns).where(eq(gowns.id, id));
   });
 }
