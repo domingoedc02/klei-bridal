@@ -65,7 +65,7 @@ export default function CategoryForm({
     setError(null);
     try {
       const csrf = readCsrfToken();
-      const response = await fetch(`/api/admin/categories/${type}`, {
+      const response = await fetch(`/api/admin/${type}`, {
         method: "POST",
         headers: { "content-type": "application/json", ...(csrf ? { "x-csrf-token": csrf } : {}) },
         body: JSON.stringify({
