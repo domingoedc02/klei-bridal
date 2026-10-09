@@ -42,12 +42,12 @@ describe("leadTimeBand — AC-ENQ-13 boundary sweep", () => {
   const today = "2026-10-09";
   const at = (weeks: number, days = 0) => addDays(today, weeks * 7 + days);
 
-  it("matches the AC catalogue with its floor of 8", () => {
-    const rule = { comfortableWeeks: 13, rushFloorWeeks: 8 };
+  it("matches the confirmed catalogue floor of 5", () => {
+    const rule = { comfortableWeeks: 13, rushFloorWeeks: 5 };
     const sweep: Array<[string, string]> = [
-      [at(7, 6), "in_stock_only"],
-      [at(8, 0), "in_stock_only"],
-      [at(8, 1), "rush"],
+      [at(4, 6), "in_stock_only"],
+      [at(5, 0), "in_stock_only"],
+      [at(5, 1), "rush"],
       [at(12, 6), "rush"],
       [at(13, 0), "comfortable"],
       [at(13, 1), "comfortable"],
