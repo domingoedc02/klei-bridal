@@ -48,7 +48,7 @@ test("new gown: 422 keeps every typed value and shows the field error", async ({
   await page.getByLabel("Details").fill("Hand-beaded lace.");
   await page.getByLabel("Price in pesos").fill("₱45,000.00");
   await page.getByLabel("In stock").check();
-  await page.getByLabel("Lace").check();
+  await page.getByRole("group", { name: "Materials" }).getByLabel("Lace").check();
   await page.getByRole("button", { name: "Create draft" }).click();
 
   await expect(page.getByText("Name is already used")).toBeVisible();
@@ -56,7 +56,7 @@ test("new gown: 422 keeps every typed value and shows the field error", async ({
   await expect(page.getByLabel("Details")).toHaveValue("Hand-beaded lace.");
   await expect(page.getByLabel("Price in pesos")).toHaveValue("PHP 45,000.00");
   await expect(page.getByLabel("In stock")).toBeChecked();
-  await expect(page.getByLabel("Lace")).toBeChecked();
+  await expect(page.getByRole("group", { name: "Materials" }).getByLabel("Lace")).toBeChecked();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
