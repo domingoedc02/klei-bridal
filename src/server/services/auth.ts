@@ -422,7 +422,7 @@ export async function resetPassword(
           ip: input.ip ?? null,
           userAgent: null,
           timezone: env.STUDIO_TIMEZONE,
-          }),
+        }),
       });
     } catch {
       await db.insert(auditLog).values({
