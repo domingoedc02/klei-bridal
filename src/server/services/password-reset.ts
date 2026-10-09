@@ -1,8 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 
 import { env } from "@/config/env";
+import { assertPasswordAllowed } from "@/server/auth/password-policy";
+import { hashPassword } from "@/server/auth/password";
+import { revokeAllSessionsForUser } from "@/server/auth/session";
+import { inetOrNull } from "@/server/ratelimit/client-ip";
+import { passwordChangedEmail } from "@/server/mail/templates/password-changed";
 import { db as defaultDb } from "@/server/db/client";
 import type { Database } from "@/server/db/client";
 import { auditLog, passwordResetTokens, staffUsers } from "@/server/db/schema";
@@ -21,6 +26,19 @@ export interface PasswordResetRequestDeps {
 const defaultDeps: PasswordResetRequestDeps = { db: defaultDb };
 
 export const PASSWORD_RESET_TOKEN_TTL_MS = RESET_TOKEN_TTL_MS;
+
+export type ConfirmPasswordResetResult =
+  | { ok: true; revokedSessions: number }
+  | {
+      ok: false;
+      reason: "invalid_token" | "weak_password" | "password_too_common" | "unavailable";
+    };
+
+export interface PasswordResetConfirmationDeps {
+  db: Database;
+  now?: () => Date;
+  sendEmail?: typeof sendTransactionalEmail;
+}
 
 export function hashPasswordResetToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -111,6 +129,99 @@ export async function requestPasswordReset(
   }
 
   return { accepted: true };
+}
+
+export async function confirmPasswordReset(
+  input: { token: string; newPassword: string; ip: string | null; userAgent: string | null },
+  deps: PasswordResetConfirmationDeps,
+): Promise<ConfirmPasswordResetResult> {
+  const now = deps.now?.() ?? new Date();
+  const tokenHash = hashPasswordResetToken(input.token);
+  const [candidate] = await deps.db
+    .select({
+      staffUserId: passwordResetTokens.staffUserId,
+      name: staffUsers.name,
+      email: staffUsers.email,
+    })
+    .from(passwordResetTokens)
+    .innerJoin(staffUsers, eq(staffUsers.id, passwordResetTokens.staffUserId))
+    .where(
+      and(
+        eq(passwordResetTokens.tokenHash, tokenHash),
+        isNull(passwordResetTokens.usedAt),
+        isNull(passwordResetTokens.revokedAt),
+        gt(passwordResetTokens.expiresAt, now),
+        eq(staffUsers.isActive, true),
+      ),
+    )
+    .limit(1);
+
+  if (!candidate) return { ok: false, reason: "invalid_token" };
+  const policy = await assertPasswordAllowed(input.newPassword, { email: candidate.email });
+  if (!policy.ok) return { ok: false, reason: policy.reason };
+  const passwordHash = await hashPassword(input.newPassword);
+  const result = await deps.db.transaction(async (tx) => {
+    const [claimed] = await tx
+      .update(passwordResetTokens)
+      .set({ usedAt: now })
+      .where(
+        and(
+          eq(passwordResetTokens.tokenHash, tokenHash),
+          eq(passwordResetTokens.staffUserId, candidate.staffUserId),
+          isNull(passwordResetTokens.usedAt),
+          isNull(passwordResetTokens.revokedAt),
+          gt(passwordResetTokens.expiresAt, now),
+        ),
+      )
+      .returning({ staffUserId: passwordResetTokens.staffUserId });
+    if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
+
+    await tx
+      .update(staffUsers)
+      .set({ passwordHash, failedLoginCount: 0, lockedUntil: null, updatedAt: now })
+      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)));
+    const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
+    await tx.insert(auditLog).values({
+      occurredAt: now,
+      actorUserId: null,
+      action: "staff.password_reset",
+      ip: inetOrNull(input.ip),
+      entityType: "staff_user",
+      entityId: candidate.staffUserId,
+      detail: { revoked_sessions: revokedSessions },
+    });
+    return { ok: true as const, revokedSessions };
+  });
+
+  if (!result.ok) return result;
+  try {
+    const send = deps.sendEmail ?? sendTransactionalEmail;
+    await send({
+      to: candidate.email,
+      ...passwordChangedEmail({
+        name: candidate.name,
+        occurredAt: now,
+        ip: input.ip,
+        userAgent: input.userAgent,
+        timezone: env.STUDIO_TIMEZONE,
+      }),
+    });
+  } catch {
+    try {
+      await deps.db.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: null,
+        action: "mail.password_changed_failed",
+        ip: inetOrNull(input.ip),
+        entityType: "staff_user",
+        entityId: candidate.staffUserId,
+        detail: { operation: "reset" },
+      });
+    } catch {
+      // Password reset remains successful when notification delivery fails.
+    }
+  }
+  return result;
 }
 
 function escapeHtml(value: string): string {
