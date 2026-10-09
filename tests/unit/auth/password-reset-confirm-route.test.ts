@@ -25,7 +25,7 @@ vi.mock("@/server/ratelimit", () => ({
 
 import { env } from "@/config/env";
 import { mintCsrfToken } from "@/server/pipeline";
-import { POST } from "../../../app/api/auth/password-reset/confirm/route";
+import { GET, POST } from "../../../app/api/auth/password-reset/confirm/route";
 
 /** `duplex` is required by undici for a stream body but missing from Next typings. */
 type NextRequestInit = NonNullable<ConstructorParameters<typeof NextRequest>[1]>;
@@ -61,6 +61,18 @@ beforeEach(() => {
     return { count, ttlSec: windowSec };
   });
   mocks.counts.clear();
+});
+
+describe("GET /api/auth/password-reset/confirm", () => {
+  it("bootstraps the CSRF cookie on a first visit", async () => {
+    const response = await GET(
+      new NextRequest(`${env.SITE_URL}/api/auth/password-reset/confirm`, { method: "GET" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain("kbs_csrf=");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
 });
 
 describe("POST /api/auth/password-reset/confirm", () => {

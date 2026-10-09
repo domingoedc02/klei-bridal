@@ -7,6 +7,7 @@ export default function AdminResetPasswordPage() {
 
   useEffect(() => {
     setToken(new URLSearchParams(window.location.search).get("token") ?? "");
+    void fetch("/api/auth/password-reset/confirm", { cache: "no-store" });
   }, []);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");

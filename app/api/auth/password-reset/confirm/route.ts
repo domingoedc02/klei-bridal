@@ -69,6 +69,11 @@ async function handler(request: NextRequest, context: { body: z.infer<typeof Con
   );
 }
 
+export const GET = withPipeline(
+  () => NextResponse.json({ ok: true }, { status: 200, headers: { "cache-control": "no-store" } }),
+  { auth: "public", rateLimit: null },
+);
+
 export const POST = withPipeline(handler, {
   auth: "public",
   rateLimit: budgets.passwordResetEmail,
