@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   // server bundle so the production image needs only `node server.js` —
   // no `node_modules` copy, no full Next.js install in the final stage.
   output: "standalone",
+  serverExternalPackages: ["sharp", "detect-libc"],
 
   outputFileTracingIncludes: { "*": ["src/server/auth/data/common-passwords.txt.gz"] },
 
