@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { enquiryBodySchema, newReference } from "@/server/services/enquiries";
+import {
+  enquiryBodySchema,
+  newReference,
+  parseLeadTimeSettings,
+} from "@/server/services/enquiries";
 import { daysBetween, isIsoDate, todayIn } from "@/shared/dates";
-import { leadTimeBand } from "@/shared/leadtime";
+import {
+  checkWeddingDate,
+  DEFAULT_LEAD_TIME_RULE,
+  DEFAULT_NOTICE_COPY,
+  leadTimeBand,
+} from "@/shared/leadtime";
 
 const addDays = (iso: string, n: number) =>
   new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
@@ -127,5 +136,64 @@ describe("enquiryBodySchema", () => {
       (_, i) => `0192f0a0-0000-7000-8000-${String(i).padStart(12, "0")}`,
     );
     expect(enquiryBodySchema.safeParse({ ...base, gown_ids: many }).success).toBe(false);
+  });
+});
+
+describe("checkWeddingDate — what the form says (KBS-17-4)", () => {
+  const today = "2026-10-09";
+  const rule = DEFAULT_LEAD_TIME_RULE; // seeded 13 / 5
+
+  it("sweeps the seeded 5-week floor exactly like the server band", () => {
+    const sweep: Array<[number, string]> = [
+      [0, "in_stock_only"],
+      [34, "in_stock_only"],
+      [35, "in_stock_only"],
+      [36, "rush"],
+      [90, "rush"],
+      [91, "comfortable"],
+    ];
+    for (const [days, band] of sweep) {
+      const date = addDays(today, days);
+      expect(checkWeddingDate(date, today, rule)).toEqual({ kind: "ok", band, far: false });
+      expect(leadTimeBand(date, today, rule)).toBe(band);
+    }
+  });
+
+  it("calls yesterday past, never a band (AC-ENQ-08)", () => {
+    expect(checkWeddingDate(addDays(today, -1), today, rule)).toEqual({ kind: "past" });
+  });
+
+  it("flags more than four years out as far, still sendable (AC-ENQ-08)", () => {
+    expect(checkWeddingDate("2030-10-09", today, rule)).toMatchObject({ kind: "ok", far: false });
+    expect(checkWeddingDate("2030-10-11", today, rule)).toMatchObject({ kind: "ok", far: true });
+  });
+});
+
+describe("parseLeadTimeSettings — page payload falls back, never blank (AC-ENQ-15)", () => {
+  it("uses stored values when valid", () => {
+    const s = parseLeadTimeSettings({
+      lead_time_comfortable_weeks: 12,
+      lead_time_rush_floor_weeks: 4,
+      lead_time_notice_copy: { rush: "Rush copy", in_stock_only: "Stock copy" },
+      studio_timezone: "Asia/Manila",
+    });
+    expect(s).toEqual({
+      rule: { comfortableWeeks: 12, rushFloorWeeks: 4 },
+      timeZone: "Asia/Manila",
+      copy: { comfortable: "", rush: "Rush copy", in_stock_only: "Stock copy" },
+    });
+  });
+
+  it("falls back whole on a broken pair, a bad zone and blank copy", () => {
+    const s = parseLeadTimeSettings({
+      lead_time_comfortable_weeks: 4,
+      lead_time_rush_floor_weeks: 6,
+      lead_time_notice_copy: { rush: "  " },
+      studio_timezone: "Mars/Olympus",
+    });
+    expect(s.rule).toEqual(DEFAULT_LEAD_TIME_RULE);
+    expect(s.timeZone).toBe("Asia/Manila");
+    expect(s.copy.rush).toBe(DEFAULT_NOTICE_COPY.rush);
+    expect(s.copy.in_stock_only).toBe(DEFAULT_NOTICE_COPY.in_stock_only);
   });
 });

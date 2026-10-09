@@ -8,6 +8,8 @@ import {
   removeFavourite,
   type ContactDetails,
 } from "@/client/favourites/storage";
+import { todayIn } from "@/shared/dates";
+import { checkWeddingDate, type LeadTimeSettings, type WeddingDateCheck } from "@/shared/leadtime";
 
 const emptyContact: ContactDetails = { firstName: "", lastName: "", contactNumber: "", email: "" };
 
@@ -23,10 +25,12 @@ function csrfToken(): string | undefined {
   }
 }
 
-export default function EnquiryForm() {
+export default function EnquiryForm({ leadTime }: { leadTime: LeadTimeSettings }) {
   const [contact, setContact] = useState<ContactDetails>(emptyContact);
   const [gowns, setGowns] = useState<string[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [dateCheck, setDateCheck] = useState<WeddingDateCheck | null>(null);
+  // A >4-year date is sent on the second press, after she has seen the year note.
+  const [farConfirmed, setFarConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -42,18 +46,9 @@ export default function EnquiryForm() {
   }
 
   function onDateChange(value: string) {
-    setNotice(null);
-    if (!value) return;
-    const today = new Date();
-    const date = new Date(`${value}T12:00:00`);
-    const weeks =
-      (date.getTime() -
-        new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) /
-      604800000;
-    if (weeks < 13)
-      setNotice(
-        "Your date is close. In-stock gowns and rush orders may both be options — view gowns available now.",
-      );
+    setFarConfirmed(false);
+    // "Today" is the studio's, so the band matches what the server stores (AC-ENQ-13).
+    setDateCheck(value ? checkWeddingDate(value, todayIn(leadTime.timeZone), leadTime.rule) : null);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -63,6 +58,15 @@ export default function EnquiryForm() {
     const values = Object.fromEntries(new FormData(form).entries());
     if (!values.wedding_date) {
       setError("Wedding date is required.");
+      dateRef.current?.focus();
+      return;
+    }
+    if (dateCheck?.kind === "past") {
+      dateRef.current?.focus();
+      return;
+    }
+    if (dateCheck?.kind === "ok" && dateCheck.far && !farConfirmed) {
+      setFarConfirmed(true);
       dateRef.current?.focus();
       return;
     }
@@ -85,8 +89,17 @@ export default function EnquiryForm() {
           gown_ids: gowns,
         }),
       });
-      if (!response.ok)
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: { fields?: Record<string, string> };
+        } | null;
+        const dateMessage = body?.error?.fields?.wedding_date;
+        if (dateMessage) {
+          dateRef.current?.focus();
+          throw new Error(dateMessage);
+        }
         throw new Error("We could not send your enquiry. Please check your details and try again.");
+      }
       try {
         window.localStorage.setItem(
           "kbs.contact.v1",
@@ -111,6 +124,21 @@ export default function EnquiryForm() {
       setPending(false);
     }
   }
+
+  const notice =
+    dateCheck?.kind === "ok" && dateCheck.band !== "comfortable" ? leadTime.copy[dateCheck.band] : "";
+  const dateNote =
+    dateCheck?.kind === "past"
+      ? "This date has already passed. Choose your wedding date."
+      : dateCheck?.kind === "ok" && dateCheck.far
+        ? farConfirmed
+          ? "That date is more than four years away. If the year is right, select Send enquiry again."
+          : "That date is more than four years away. Please check the year."
+        : "";
+  const describedBy =
+    [dateNote && "wedding-date-note", notice && "lead-notice", error && "form-error"]
+      .filter(Boolean)
+      .join(" ") || undefined;
 
   if (sent)
     return (
@@ -185,9 +213,24 @@ export default function EnquiryForm() {
               type="date"
               onChange={(e) => onDateChange(e.target.value)}
               required
-              aria-describedby={error ? "form-error" : undefined}
+              aria-describedby={describedBy}
             />
           </label>
+          {/* Live regions stay mounted so screen readers announce changes. */}
+          <div className="wide date-help" aria-live="polite">
+            {dateNote ? (
+              <p className="date-note" id="wedding-date-note">
+                {dateNote}
+              </p>
+            ) : null}
+            {notice ? (
+              // Informs only: no error colour, no role=alert, submit stays enabled (AC-ENQ-09..15).
+              <aside className="lead-notice" id="lead-notice">
+                <strong>Planning a close date?</strong> {notice}{" "}
+                <Link href="/gowns?available_now=true">View gowns available now</Link>
+              </aside>
+            ) : null}
+          </div>
           <label className="wide">
             Message <span>(optional)</span>
             <textarea name="message" rows={5} maxLength={2000} />
@@ -218,12 +261,6 @@ export default function EnquiryForm() {
           <p>No gown selected yet. You can still send an enquiry.</p>
         )}
       </section>
-      {notice ? (
-        <aside className="lead-notice" aria-live="polite">
-          <strong>Planning a close date?</strong> {notice}{" "}
-          <Link href="/gowns?available_now=true">View gowns available now</Link>
-        </aside>
-      ) : null}
       {error ? (
         <p className="form-error" id="form-error" role="alert">
           {error}
@@ -338,13 +375,23 @@ export default function EnquiryForm() {
           outline: 2px solid #6e5420;
           outline-offset: 2px;
         }
+        .date-help:empty {
+          display: none;
+        }
+        .date-note {
+          margin: 0;
+          color: #2b2825;
+        }
         .lead-notice {
           border-left: 3px solid #6e5420;
           padding: 1rem;
-          margin: 1rem 0;
+          margin: 0.5rem 0 0;
           background: #eee8dd;
         }
         .lead-notice a {
+          display: inline-flex;
+          align-items: center;
+          min-height: 2.75rem;
           color: #2b2825;
           font-weight: 700;
         }
