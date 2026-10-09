@@ -10,7 +10,7 @@
 export async function register() {
   try {
     await import("@/config/env");
-    if (!("EdgeRuntime" in globalThis)) {
+    if (process.env.NEXT_RUNTIME === "nodejs") {
       const { startImageWorker } = await import("@/server/worker/imageWorker");
       startImageWorker();
     }
