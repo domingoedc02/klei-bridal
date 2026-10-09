@@ -1,16 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { POST as loginRoute } from "../../../app/api/auth/login/route";
 import { POST as logoutRoute } from "../../../app/api/auth/logout/route";
-import { hashPassword } from "@/server/auth/password";
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "@/server/auth/password";
 import { SESSION_COOKIE, hashSessionToken, validateSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { MemoryAttemptStore } from "@/server/ratelimit/attempt-store";
 import { csrfHeaders } from "../csrf-headers";
 import { signIn, signOut } from "@/server/services/auth";
+
+// Pass-through spy: real argon2id still runs; tests only count the calls.
+vi.mock("@/server/auth/password", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/auth/password")>();
+  return { ...actual, verifyPassword: vi.fn(actual.verifyPassword) };
+});
 
 /**
  * KBS-27-1 against real Postgres 17: sign-in, sign-out, lockout and the
@@ -130,24 +136,29 @@ describe("no user enumeration, including timing", () => {
   });
 
   it("runs a full argon2id verify for an unknown email (no short-circuit)", async () => {
-    const staff = await makeStaff();
+    // KBS-87: a call count, not a timing ratio. The ratio compared paths with
+    // different DB work and flaked under CI's cheap argon2 params.
+    const verify = vi.mocked(verifyPassword);
+    verify.mockClear();
     const unknownEmail = `nobody-${randomUUID()}@kleibridal.test`;
-    const samples = { wrongPassword: [] as number[], unknownEmail: [] as number[] };
-    for (let i = 0; i < 5; i++) {
-      for (const [label, email] of [
-        ["wrongPassword", staff.email],
-        ["unknownEmail", unknownEmail],
-      ] as const) {
-        const t0 = performance.now();
-        await signIn({ email, password: "wrong", ip: ip(), userAgent: null }, deps());
-        samples[label].push(performance.now() - t0);
-      }
-    }
-    const wrongPassword = samples.wrongPassword.sort((x, y) => x - y)[2]!;
-    const unknownEmailTime = samples.unknownEmail.sort((x, y) => x - y)[2]!;
-    // A short-circuit would be ~1 ms against tens of ms for argon2id; the
-    // bound is loose on purpose so a noisy CI runner cannot flake it.
-    expect(unknownEmailTime).toBeGreaterThan(wrongPassword * 0.5);
+    const result = await signIn(
+      { email: unknownEmail, password: "wrong", ip: ip(), userAgent: null },
+      deps(),
+    );
+    expect(result).toEqual({ ok: false, reason: "invalid_credentials" });
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(verify).toHaveBeenCalledWith(DUMMY_PASSWORD_HASH, "wrong");
+    // The spy passes through: the real verify ran to completion.
+    await expect(verify.mock.results[0]!.value).resolves.toBe(false);
+  });
+
+  it("runs the same single verify for a disabled account as for an unknown email", async () => {
+    const disabled = await makeStaff({ isActive: false });
+    const verify = vi.mocked(verifyPassword);
+    verify.mockClear();
+    await signIn({ email: disabled.email, password: PASSWORD, ip: ip(), userAgent: null }, deps());
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(verify).toHaveBeenCalledWith(DUMMY_PASSWORD_HASH, PASSWORD);
   });
 
   it("returns the same 401 body from the route for an unknown email and a wrong password", async () => {
