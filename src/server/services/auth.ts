@@ -209,7 +209,19 @@ export type ChangePasswordResult =
   | { ok: true; token: string; expiresAt: Date; revokedOtherSessions: number }
   | { ok: false; reason: "unauthenticated" }
   | { ok: false; reason: "wrong_current_password" }
+  | { ok: false; reason: "too_many_attempts"; retryAfterSeconds: number }
   | { ok: false; reason: "weak_password" | "password_too_common" | "unavailable" };
+
+// ponytail: fixed limits (KBS-63), not env — same as sign-in. Per USER, not
+// per IP, so rotating IPs or sessions never buys more guesses.
+export const PASSWORD_CHANGE_MAX_FAILURES = 5;
+const PASSWORD_CHANGE_WINDOW_MS = 15 * 60_000;
+const pwchgKey = (staffUserId: string) => `pwchg:fail:${staffUserId}`;
+
+async function retryAfterSeconds(store: AttemptStore, key: string): Promise<number> {
+  const ms = await store.pttl(key);
+  return ms && ms > 0 ? Math.ceil(ms / 1000) : PASSWORD_CHANGE_WINDOW_MS / 1000;
+}
 
 /**
  * Password change from settings (current + new), KBS-27-2. In ONE
@@ -226,13 +238,31 @@ export async function changePassword(
     ip: string | null;
     userAgent: string | null;
   },
-  deps: Pick<AuthDeps, "db" | "now"> = defaultDeps,
+  deps: Pick<AuthDeps, "db" | "now"> & { store?: AttemptStore } = defaultDeps,
 ): Promise<ChangePasswordResult> {
   const { db } = deps;
+  const store = deps.store ?? loginAttemptStore;
   const now = deps.now?.() ?? new Date();
 
   const session = await validateSession(db, input.token, now);
   if (!session) return { ok: false, reason: "unauthenticated" };
+
+  // KBS-63: wrong current-password guesses are capped per user. While the
+  // counter is at the limit, EVERY session of the user is refused before
+  // the password is verified, so a right guess can't be confirmed. A store
+  // outage fails closed (503) and nothing changes.
+  const key = pwchgKey(session.staff.id);
+  try {
+    if (((await store.get(key)) ?? 0) >= PASSWORD_CHANGE_MAX_FAILURES) {
+      return {
+        ok: false,
+        reason: "too_many_attempts",
+        retryAfterSeconds: await retryAfterSeconds(store, key),
+      };
+    }
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
 
   const [user] = await db
     .select({ passwordHash: staffUsers.passwordHash })
@@ -240,10 +270,39 @@ export async function changePassword(
     .where(eq(staffUsers.id, session.staff.id))
     .limit(1);
   if (!user || !(await verifyPassword(user.passwordHash, input.currentPassword))) {
-    return { ok: false, reason: "wrong_current_password" };
+    let failures: number;
+    let retry: number;
+    try {
+      failures = await store.incr(key, PASSWORD_CHANGE_WINDOW_MS);
+      retry = failures >= PASSWORD_CHANGE_MAX_FAILURES ? await retryAfterSeconds(store, key) : 0;
+    } catch {
+      return { ok: false, reason: "unavailable" };
+    }
+    if (failures < PASSWORD_CHANGE_MAX_FAILURES)
+      return { ok: false, reason: "wrong_current_password" };
+    // The session that tripped the limit is revoked: a stolen cookie gets
+    // no more tries once the window ends.
+    await db.transaction(async (tx) => {
+      await revokeSession(tx, input.token, now);
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: session.staff.id,
+        action: "auth.password_change_locked",
+        ip: inetOrNull(input.ip),
+        entityType: "staff_user",
+        entityId: session.staff.id,
+        detail: { session_id: session.sessionId, failures },
+      });
+    });
+    return { ok: false, reason: "too_many_attempts", retryAfterSeconds: retry };
   }
   const policy = await assertPasswordAllowed(input.newPassword, { email: session.staff.email });
   if (!policy.ok) return { ok: false, reason: policy.reason };
+  try {
+    await store.del([key]);
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
 
   const passwordHash = await hashPassword(input.newPassword);
   return db.transaction(async (tx) => {
