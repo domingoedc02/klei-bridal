@@ -15,7 +15,7 @@ export default function CategoryList({ type }: { type: CategoryType }) {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`/api/admin/categories/${type}`);
+      const response = await fetch(`/api/admin/${type}`);
       if (!response.ok) throw new Error("Could not load categories.");
       const body: unknown = await response.json();
       const list =
@@ -58,7 +58,7 @@ export default function CategoryList({ type }: { type: CategoryType }) {
   async function rename(item: Category) {
     if (!editName.trim()) return;
     if (
-      await mutate(`/api/admin/categories/${type}/${item.id}`, {
+      await mutate(`/api/admin/${type}/${item.id}`, {
         method: "PATCH",
         body: JSON.stringify({ name: editName.trim() }),
       })
@@ -67,14 +67,14 @@ export default function CategoryList({ type }: { type: CategoryType }) {
   }
 
   async function remove(item: Category) {
-    if (await mutate(`/api/admin/categories/${type}/${item.id}`, { method: "DELETE" }))
+    if (await mutate(`/api/admin/${type}/${item.id}`, { method: "DELETE" }))
       setNotice(`${item.name} deleted.`);
   }
 
   async function merge(targetId: string) {
     if (!selected) return;
     if (
-      await mutate(`/api/admin/categories/${type}/${selected.id}/merge`, {
+      await mutate(`/api/admin/${type}/${selected.id}/merge`, {
         method: "POST",
         body: JSON.stringify({ target_id: targetId }),
       })
