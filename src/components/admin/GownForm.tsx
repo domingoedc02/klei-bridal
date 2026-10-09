@@ -22,6 +22,7 @@ type Gown = {
   price_minor: number | null;
   currency: string;
   price_status: "priced" | "on_request" | "unlisted";
+  slug_locked: boolean;
   is_in_stock: boolean;
   status: "draft" | "published" | "archived";
 };
@@ -40,7 +41,7 @@ type FormState = {
   materialIds: string[];
   collectionIds: string[];
   price: string;
-  onRequest: boolean;
+  priceStatus: Gown["price_status"];
   inStock: boolean;
 };
 
@@ -53,7 +54,7 @@ const EMPTY: FormState = {
   materialIds: [],
   collectionIds: [],
   price: "",
-  onRequest: false,
+  priceStatus: "priced",
   inStock: false, // made-to-order only: the safer default, it promises less
 };
 
@@ -67,7 +68,7 @@ function fromGown(gown: Gown): FormState {
     materialIds: gown.material_ids,
     collectionIds: gown.collection_ids,
     price: gown.price_minor ? formatMinor(gown.price_minor, gown.currency) : "",
-    onRequest: gown.price_status !== "priced",
+    priceStatus: gown.price_status,
     inStock: gown.is_in_stock,
   };
 }
@@ -168,14 +169,14 @@ export default function GownForm({ id }: { id: string | null }) {
   }, [id]);
 
   const set = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }));
-  const slugLocked = gown !== null && gown.status !== "draft";
+  const slugLocked = gown?.slug_locked ?? false;
   const parsedPrice = parsePriceToMinor(form.price);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
     setNotice(null);
-    if (!form.onRequest && parsedPrice === null) {
+    if (form.priceStatus === "priced" && parsedPrice === null) {
       setFields({ price_minor: "Enter a price such as 45,000.00, or choose price on request." });
       return;
     }
@@ -191,8 +192,8 @@ export default function GownForm({ id }: { id: string | null }) {
           silhouette_id: form.silhouetteId || null,
           material_ids: form.materialIds,
           collection_ids: form.collectionIds,
-          price_status: form.onRequest ? "on_request" : "priced",
-          price_minor: form.onRequest ? null : parsedPrice,
+          price_status: form.priceStatus,
+          price_minor: form.priceStatus === "priced" ? parsedPrice : null,
           currency: "PHP",
           is_in_stock: form.inStock,
         },
@@ -309,8 +310,8 @@ export default function GownForm({ id }: { id: string | null }) {
             <input
               type="radio"
               name="price-status"
-              checked={!form.onRequest}
-              onChange={() => set({ onRequest: false })}
+              checked={form.priceStatus === "priced"}
+              onChange={() => set({ priceStatus: "priced" })}
             />
             Exact price
           </label>
@@ -318,12 +319,21 @@ export default function GownForm({ id }: { id: string | null }) {
             <input
               type="radio"
               name="price-status"
-              checked={form.onRequest}
-              onChange={() => set({ onRequest: true })}
+              checked={form.priceStatus === "on_request"}
+              onChange={() => set({ priceStatus: "on_request" })}
             />
             Price on request
           </label>
-          {form.onRequest ? null : (
+          <label className="choice">
+            <input
+              type="radio"
+              name="price-status"
+              checked={form.priceStatus === "unlisted"}
+              onChange={() => set({ priceStatus: "unlisted" })}
+            />
+            Unlisted
+          </label>
+          {form.priceStatus === "priced" ? (
             <div className="field">
               <label htmlFor="gown-price">Price in pesos</label>
               <input
@@ -340,7 +350,7 @@ export default function GownForm({ id }: { id: string | null }) {
               ) : null}
               {error("price_minor")}
             </div>
-          )}
+          ) : null}
           {error("price_status")}
         </fieldset>
 

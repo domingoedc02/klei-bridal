@@ -14,6 +14,7 @@ const draft = {
   price_minor: 4_500_000,
   currency: "PHP",
   price_status: "priced",
+  slug_locked: false,
   is_in_stock: false,
   status: "draft",
 };
@@ -80,7 +81,7 @@ test("publish refusal shows its reason; publishing locks the slug", async ({ pag
             },
           },
         })
-      : route.fulfill({ json: { ...draft, status: "published" } });
+      : route.fulfill({ json: { ...draft, status: "published", slug_locked: true } });
   });
   await page.goto(`/admin/gowns/${draft.id}`);
   await expect(page.getByLabel("Web address")).toHaveValue("amelie");
@@ -92,6 +93,30 @@ test("publish refusal shows its reason; publishing locks the slug", async ({ pag
   await page.getByRole("button", { name: "Publish" }).click();
   await expect(page.getByRole("button", { name: "Unpublish" })).toBeVisible();
   await expect(page.getByLabel("Web address")).toHaveAttribute("readonly");
+
+  await page.route(`**/api/admin/gowns/${draft.id}`, (route) =>
+    route.fulfill({ json: { ...draft, status: "draft", slug_locked: true } }),
+  );
+  await page.getByRole("button", { name: "Unpublish" }).click();
+  await expect(page.getByRole("button", { name: "Publish" })).toBeVisible();
+  await expect(page.getByLabel("Web address")).toHaveAttribute("readonly");
+});
+
+test("unlisted gown stays unlisted when saved", async ({ page }) => {
+  await mockVocab(page);
+  const unlisted = { ...draft, price_status: "unlisted", price_minor: null };
+  let savedBody: Record<string, unknown> | undefined;
+  await page.route(`**/api/admin/gowns/${draft.id}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      savedBody = route.request().postDataJSON() as Record<string, unknown>;
+      return route.fulfill({ json: unlisted });
+    }
+    return route.fulfill({ json: unlisted });
+  });
+  await page.goto(`/admin/gowns/${draft.id}`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedBody?.price_status).toBe("unlisted");
+  expect(savedBody?.price_minor).toBeNull();
 });
 
 test("gown list shows status, PHP price and availability", async ({ page }) => {
