@@ -7,6 +7,11 @@ import * as collectionsRoute from "../../../app/api/admin/collections/route";
 import * as materialsRoute from "../../../app/api/admin/materials/route";
 import * as silhouettesRoute from "../../../app/api/admin/silhouettes/route";
 import * as silhouetteRoute from "../../../app/api/admin/silhouettes/[id]/route";
+import * as materialRoute from "../../../app/api/admin/materials/[id]/route";
+import * as collectionRoute from "../../../app/api/admin/collections/[id]/route";
+import * as silhouetteMerge from "../../../app/api/admin/silhouettes/[id]/merge/route";
+import * as materialMerge from "../../../app/api/admin/materials/[id]/merge/route";
+import * as collectionMerge from "../../../app/api/admin/collections/[id]/merge/route";
 import { SESSION_COOKIE, createSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { csrfHeaders } from "../csrf-headers";
@@ -14,7 +19,7 @@ import { csrfHeaders } from "../csrf-headers";
 /**
  * KBS-22-1 through the real routes and Postgres 17: auth, CSRF, create,
  * list, rename, exact duplicate (409), near duplicate (pg_trgm), 422 and
- * the audit row. Names are random hex so no seed or earlier row is "similar".
+ * the audit row; KBS-22-2 delete (refused in use) and merge. Names are random hex so no seed or earlier row is "similar".
  */
 
 const DATABASE_URL =
@@ -209,5 +214,212 @@ describe("rename", () => {
       { params: Promise.resolve({ id: item.id }) } as never,
     );
     expect(res.status).toBe(403);
+  });
+});
+
+const ITEM = {
+  silhouettes: silhouetteRoute,
+  materials: materialRoute,
+  collections: collectionRoute,
+};
+const MERGE = {
+  silhouettes: silhouetteMerge,
+  materials: materialMerge,
+  collections: collectionMerge,
+};
+const ROUTES = {
+  silhouettes: silhouettesRoute,
+  materials: materialsRoute,
+  collections: collectionsRoute,
+};
+type Type = keyof typeof ITEM;
+const ENTITY = { silhouettes: "silhouette", materials: "material", collections: "collection" };
+const LINK = {
+  materials: ["gown_materials", "material_id"],
+  collections: ["gown_collections", "collection_id"],
+} as const;
+
+const params = (id: string) => ({ params: Promise.resolve({ id }) }) as never;
+const make = async (type: Type) =>
+  (await (await ROUTES[type].POST(request(`/api/admin/${type}`, "POST", { name: name() }))).json())
+    .id as string;
+const remove = (type: Type, id: string, withCsrf = true) =>
+  ITEM[type].DELETE(request(`/api/admin/${type}/${id}`, "DELETE", undefined, withCsrf), params(id));
+const merge = (type: Type, id: string, body: unknown, withCsrf = true) =>
+  MERGE[type].POST(request(`/api/admin/${type}/${id}/merge`, "POST", body, withCsrf), params(id));
+
+/** A draft gown on `silhouette`, tagged with each [type, id] in `tags`. */
+async function gown(silhouette: string, tags: [keyof typeof LINK, string][] = []) {
+  const id = randomUUID();
+  await sql`
+    INSERT INTO gowns (id, slug, name, status, silhouette_id, created_by, updated_by)
+    VALUES (${id}, ${`vocab-${id}`}, 'Vocab gown', 'draft', ${silhouette}, ${staffId}, ${staffId})
+  `;
+  gownIds.push(id);
+  for (const [type, value] of tags) {
+    const [table, col] = LINK[type];
+    await sql`INSERT INTO ${sql(table)} (gown_id, ${sql(col)}) VALUES (${id}, ${value})`;
+  }
+  return id;
+}
+
+describe("delete (KBS-22-2)", () => {
+  it.each(["silhouettes", "materials", "collections"] as const)(
+    "deletes an unused %s value (204) and audits it",
+    async (type) => {
+      const id = await make(type);
+      const res = await remove(type, id);
+      expect(res.status).toBe(204);
+      expect(await sql`SELECT 1 FROM ${sql(type)} WHERE id = ${id}`).toHaveLength(0);
+      const audit = await sql`
+        SELECT action, entity_type, host(ip) AS ip FROM audit_log
+        WHERE entity_id = ${id} AND action LIKE '%.delete'
+      `;
+      expect(audit).toEqual([
+        { action: `${ENTITY[type]}.delete`, entity_type: ENTITY[type], ip: IP },
+      ]);
+    },
+  );
+
+  it("refuses a value in use with 409, the gown count and the options", async () => {
+    const sil = await make("silhouettes");
+    const mat = await make("materials");
+    await gown(sil, [["materials", mat]]);
+    await gown(sil, [["materials", mat]]);
+
+    const res = await remove("materials", mat);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe("IN_USE");
+    expect(body).toMatchObject({ gown_count: 2, options: ["merge", "deactivate"] });
+    expect(await sql`SELECT 1 FROM materials WHERE id = ${mat}`).toHaveLength(1);
+    expect((await remove("silhouettes", sil)).status).toBe(409);
+  });
+
+  it("answers an unknown id with 404", async () => {
+    expect((await remove("collections", randomUUID())).status).toBe(404);
+  });
+
+  it("refuses a delete without the CSRF token, and keeps the value", async () => {
+    const id = await make("collections");
+    expect((await remove("collections", id, false)).status).toBe(403);
+    expect(await sql`SELECT 1 FROM collections WHERE id = ${id}`).toHaveLength(1);
+  });
+
+  it("refuses a delete with no session (401)", async () => {
+    const id = await make("collections");
+    const res = await collectionRoute.DELETE(
+      new NextRequest(`http://localhost:3000/api/admin/collections/${id}`, {
+        method: "DELETE",
+        headers: csrfHeaders(),
+      }),
+      params(id),
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("merge (KBS-22-2)", () => {
+  it.each(["materials", "collections"] as const)(
+    "moves every gown from A to B, dedupes a gown with both, deletes A, one audit row (%s)",
+    async (type) => {
+      const sil = await make("silhouettes");
+      const a = await make(type);
+      const b = await make(type);
+      const both = await gown(sil, [
+        [type, a],
+        [type, b],
+      ]);
+      const onlyA = [await gown(sil, [[type, a]]), await gown(sil, [[type, a]])];
+
+      const res = await merge(type, a, { target_id: b });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ moved_count: 3 });
+
+      const [table, col] = LINK[type];
+      const onB = await sql`SELECT gown_id FROM ${sql(table)} WHERE ${sql(col)} = ${b}`;
+      expect(onB.map((r) => r.gown_id).sort()).toEqual([both, ...onlyA].sort());
+      expect(await sql`SELECT 1 FROM ${sql(table)} WHERE ${sql(col)} = ${a}`).toHaveLength(0);
+      expect(await sql`SELECT 1 FROM ${sql(type)} WHERE id = ${a}`).toHaveLength(0);
+
+      const audit = await sql`
+        SELECT action, entity_id, detail, host(ip) AS ip FROM audit_log
+        WHERE action = ${`${ENTITY[type]}.merge`} AND entity_id = ${b}
+      `;
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        detail: { source_id: a, target_id: b, moved_count: 3 },
+        ip: IP,
+      });
+    },
+  );
+
+  it("re-points every gown's silhouette", async () => {
+    const a = await make("silhouettes");
+    const b = await make("silhouettes");
+    const moved = [await gown(a), await gown(a)];
+
+    const res = await merge("silhouettes", a, { target_id: b });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ moved_count: 2 });
+    const rows = await sql`SELECT silhouette_id FROM gowns WHERE id = ANY(${moved})`;
+    expect(rows.every((r) => r.silhouette_id === b)).toBe(true);
+    expect(await sql`SELECT 1 FROM silhouettes WHERE id = ${a}`).toHaveLength(0);
+  });
+
+  it("refuses a merge into itself with 422 and changes nothing", async () => {
+    const a = await make("materials");
+    const res = await merge("materials", a, { target_id: a });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error.code).toBe("VALIDATION_ERROR");
+    expect(await sql`SELECT 1 FROM materials WHERE id = ${a}`).toHaveLength(1);
+  });
+
+  it("answers an unknown or cross-type id with 404 and changes nothing", async () => {
+    const a = await make("materials");
+    const collection = await make("collections");
+    expect((await merge("materials", a, { target_id: randomUUID() })).status).toBe(404);
+    expect((await merge("materials", randomUUID(), { target_id: a })).status).toBe(404);
+    expect((await merge("materials", a, { target_id: collection })).status).toBe(404);
+    expect(await sql`SELECT 1 FROM materials WHERE id = ${a}`).toHaveLength(1);
+    expect(await sql`SELECT 1 FROM collections WHERE id = ${collection}`).toHaveLength(1);
+  });
+
+  it("answers a body with no target with 422", async () => {
+    const a = await make("materials");
+    expect((await merge("materials", a, {})).status).toBe(422);
+  });
+
+  it("refuses a merge without the CSRF token, or with no session", async () => {
+    const a = await make("collections");
+    const b = await make("collections");
+    expect((await merge("collections", a, { target_id: b }, false)).status).toBe(403);
+    const anon = await collectionMerge.POST(
+      new NextRequest(`http://localhost:3000/api/admin/collections/${a}/merge`, {
+        method: "POST",
+        headers: { ...csrfHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ target_id: b }),
+      }),
+      params(a),
+    );
+    expect(anon.status).toBe(401);
+    expect(await sql`SELECT 1 FROM collections WHERE id = ${a}`).toHaveLength(1);
+  });
+
+  it("lets one of two concurrent merges of the same pair win cleanly", async () => {
+    const sil = await make("silhouettes");
+    const a = await make("collections");
+    const b = await make("collections");
+    await gown(sil, [["collections", a]]);
+    const statuses = (
+      await Promise.all([
+        merge("collections", a, { target_id: b }),
+        merge("collections", a, { target_id: b }),
+      ])
+    )
+      .map((r) => r.status)
+      .sort();
+    expect(statuses).toEqual([200, 404]);
+    expect(await sql`SELECT 1 FROM gown_collections WHERE collection_id = ${b}`).toHaveLength(1);
   });
 });
