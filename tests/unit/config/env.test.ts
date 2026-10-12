@@ -105,4 +105,20 @@ describe("src/config/env", () => {
     const { env } = await loadEnvModule();
     expect(env.ALERT_EMAIL).toBe("alerts@kleibridal.com");
   });
+
+  it.each([
+    ["the same path", "./.data/images", "./.data/images"],
+    ["the same path spelled differently", "/data/media/originals", "/data/media/x/../originals/"],
+    ["the cache inside originals", "/data/media", "/data/media/derivatives"],
+    ["originals inside the cache", "/data/media/derivatives/originals", "/data/media/derivatives"],
+  ])("refuses to boot when the image paths overlap: %s", async (_label, originals, cache) => {
+    setEnv({ IMAGE_ORIGINALS_PATH: originals, IMAGE_CACHE_PATH: cache });
+    await expect(loadEnvModule()).rejects.toThrow(/IMAGE_ORIGINALS_PATH .* overlap/);
+  });
+
+  it("boots when the image paths are sibling directories, even with a shared name prefix", async () => {
+    setEnv({ IMAGE_ORIGINALS_PATH: "/data/media/orig", IMAGE_CACHE_PATH: "/data/media/original" });
+    const { env } = await loadEnvModule();
+    expect(env.IMAGE_CACHE_PATH).toBe("/data/media/original");
+  });
 });

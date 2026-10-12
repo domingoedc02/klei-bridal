@@ -51,6 +51,11 @@ agreed and ready to run the moment `KBS-31` lands, not written at the last minut
       ⚠ **BLOCKED** — `ALERT_EMAIL` is not yet known, and **it must not equal
       `STUDIO_ENQUIRY_EMAIL`** (a studio-address bounce alert delivered to the bouncing
       address is circular). Owner: project-manager, with the client.
+- [ ] `IMAGE_ORIGINALS_PATH` ≠ `IMAGE_CACHE_PATH`: two **separate, non-nested** directories
+      on the `kbs-media` volume (`/data/media/originals` and `/data/media/derivatives`).
+      `/media` serves `<sha256>.jpg` from the cache root and originals use the same naming, so
+      a shared or nested path would publish the photographer's unprocessed masters. The app
+      refuses to boot on overlap. **Report back:** the two values exactly as set in Dokploy.
 - [ ] SPF, DKIM and DMARC passing; test enquiry reaching Gmail, Outlook and Yahoo without
       landing in spam. See `docs/runbook/dns-records.md` steps 3–4.
 - [ ] Mail delivery-event webhook registered with the provider and verified by a test event.
@@ -98,7 +103,7 @@ today versus what is still waiting on a client fact — **do not fill a ⚠ row 
 | `MAIL_DRY_RUN` | ✅ | `false` in production, always |
 | `MAIL_WEBHOOK_SIGNING_SECRET` | ✅ procedure known | Generate and set **before** webhook registration — `docs/runbook/dns-records.md` step 5 |
 | `ALERT_EMAIL` | ⚠ BLOCKED | Must differ from `STUDIO_ENQUIRY_EMAIL` — see Technical gates above |
-| `IMAGE_ORIGINALS_PATH` / `IMAGE_CACHE_PATH` | ✅ | `/data/media/originals`, `/data/media/derivatives` — fixed values, the `kbs-media` volume mount from `docs/runbook/deploy.md` |
+| `IMAGE_ORIGINALS_PATH` / `IMAGE_CACHE_PATH` | ✅ | `/data/media/originals`, `/data/media/derivatives` — fixed values, the `kbs-media` volume mount from `docs/runbook/deploy.md`. **Must be different, non-nested directories**; boot refuses otherwise (Technical gates above) |
 | `STUDIO_TIMEZONE` | ⚠ BLOCKED | Seeded `Asia/Manila` everywhere as an **unconfirmed assumption** — moves together with the deploy window and the lead-time band calculation if the client answers differently (`decision/vps-capacity`, `KBS-31`) |
 | `DEFAULT_CURRENCY` | ✅ | `PHP`, confirmed |
 | `MESSENGER_PAGE_HANDLE` / `WHATSAPP_NUMBER` | ⚠ BLOCKED | Bootstrap-only values (seed `settings`, then client-editable) — real values not yet supplied |
