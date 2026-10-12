@@ -17,6 +17,7 @@ const SESSION = "S3ss10nT0k3nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const CSRF = "csrfT0k3nBBBBBBBBBBBBBB";
 const RESET = "r3s3tT0k3nCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
 const BRIDE = "ana.santos@example.test";
+const IPS = ["198.51.100.23", "198.51.100.24", "198.51.100.25", "198.51.100.26", "198.51.100.27"];
 const SECRETS = [
   SHORT_TOKEN,
   SESSION,
@@ -25,6 +26,8 @@ const SECRETS = [
   BRIDE,
   "re_live_abcdefgh123",
   "+63 917 123 4567",
+  "203.0.113.9",
+  ...IPS,
 ];
 
 function hostileEvent() {
@@ -50,7 +53,14 @@ function hostileEvent() {
         authorization: "Bearer re_live_abcdefgh123",
         referer: `https://kleibridal.test/admin/reset-password?token=${RESET}`,
         "user-agent": "test",
+        "x-csrf-token": CSRF,
+        "x-forwarded-for": `${IPS[0]}, 10.0.0.2`,
+        "x-real-ip": IPS[1],
+        forwarded: `for=${IPS[2]};proto=https`,
+        "cf-connecting-ip": IPS[3],
+        "true-client-ip": IPS[4],
       },
+      env: { REMOTE_ADDR: IPS[0] },
       data: { first_name: "Ana", email: BRIDE, contact_number: "+63 917 123 4567" },
       query_string: `token=${RESET}`,
     },

@@ -35,7 +35,7 @@ export function scrubString(value: string): string {
 
 /** Keys whose values are dropped outright, at any depth. */
 const SENSITIVE_KEY =
-  /^(cookie|cookies|set-cookie|authorization|password|new_?password|current_?password|token|raw_?token|secret|api_?key|email|contact_?number|phone|message|first_?name|last_?name)$/i;
+  /^(cookie|cookies|set-cookie|authorization|password|new_?password|current_?password|token|raw_?token|secret|api_?key|email|contact_?number|phone|message|first_?name|last_?name|x-forwarded-for|x-real-ip|forwarded|cf-connecting-ip|true-client-ip|x-csrf-token|ip_?address|remote_addr)$/i;
 
 const MAX_DEPTH = 12;
 
@@ -75,6 +75,7 @@ export function scrubEvent<T extends ScrubbableEvent>(event: T): T {
     delete request.data;
     delete request.cookies;
     delete request.query_string;
+    delete request.env; // REMOTE_ADDR etc. — client IP is personal data
     copy.request = request;
   }
   delete copy.user;
