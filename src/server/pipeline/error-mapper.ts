@@ -1,12 +1,15 @@
 import type { ErrorEnvelope } from "../../shared/schemas/errorEnvelope";
+import { logger } from "../observability/logger";
+import { captureError } from "../observability/sentry";
 import { PipelineError, SilentlyDropped } from "./errors";
 
 /** Where full error detail goes — never to the client (spec/api → Errors). */
 export type Reporter = (error: unknown, context: { requestId: string }) => void;
 
-/** ponytail: server log only until Sentry lands; swap this for Sentry.captureException. */
-export const consoleReporter: Reporter = (error, { requestId }) => {
-  console.error(`[request ${requestId}]`, error);
+/** Scrubbed structured log line + Sentry (a no-op without SENTRY_DSN). */
+export const defaultReporter: Reporter = (error, { requestId }) => {
+  logger.error({ request_id: requestId, err: error }, "request_failed");
+  captureError(error, { requestId });
 };
 
 /** Seconds a statement timeout asks the client to wait. */

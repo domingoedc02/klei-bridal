@@ -4,6 +4,7 @@ import { env } from "@/config/env";
 import type { Database } from "@/server/db/client";
 import { enquiries } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
+import { logger } from "@/server/observability/logger";
 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [250, 500];
@@ -260,8 +261,8 @@ async function deliver(
 
 /** Best-effort only. Call after the transaction has committed. */
 export async function dispatchEnquiryEmails(data: EnquiryEmailData, deps: EnquiryMailDeps = {}) {
-  const logger = deps.log ?? ((message, details) => console.error(`[mail] ${message}`, details));
-  const deliveryDeps = { ...deps, log: logger };
+  const log = deps.log ?? ((message, details) => logger.error(details, `mail: ${message}`));
+  const deliveryDeps = { ...deps, log };
   await Promise.all([
     deliver("studio", data, studioEnquiryEmail(data), deliveryDeps),
     deliver("bride", data, brideEnquiryEmail(data), deliveryDeps),

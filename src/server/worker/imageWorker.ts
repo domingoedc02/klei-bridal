@@ -4,6 +4,8 @@ import { sql } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import { db } from "@/server/db/client";
+import { logger } from "@/server/observability/logger";
+import { captureError } from "@/server/observability/sentry";
 import { gownImages, imageJobs } from "@/server/db/schema";
 import { originalsRoot } from "@/server/media/contentAddress";
 import { sweepOrphanedOriginals } from "@/server/media/orphanSweep";
@@ -90,20 +92,24 @@ export async function processImageJobs(limit = env.IMAGE_WORKER_CONCURRENCY) {
   return jobs.length;
 }
 
+const workerFailed = (msg: string) => (error: unknown) => {
+  logger.error({ err: error }, msg);
+  captureError(error);
+};
+
 let started = false;
 /** Start bounded polling. Timer is unref'd so tests and one-shot scripts can exit. */
 export function startImageWorker() {
   if (started) return;
   started = true;
   const timer = setInterval(() => {
-    void processImageJobs().catch((error) => console.error("image worker:", error));
+    void processImageJobs().catch(workerFailed("image_worker_failed"));
   }, POLL_MS);
   timer.unref();
-  void processImageJobs().catch((error) => console.error("image worker:", error));
+  void processImageJobs().catch(workerFailed("image_worker_failed"));
 
   // Also run shortly after boot, so frequent redeploys cannot starve the sweep.
-  const sweep = () =>
-    void sweepOrphanedOriginals().catch((error) => console.error("orphan sweep:", error));
+  const sweep = () => void sweepOrphanedOriginals().catch(workerFailed("orphan_sweep_failed"));
   setTimeout(sweep, SWEEP_AFTER_BOOT_MS).unref();
   setInterval(sweep, SWEEP_MS).unref();
 }

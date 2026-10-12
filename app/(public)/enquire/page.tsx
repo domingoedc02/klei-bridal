@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import EnquiryForm from "@/components/public/EnquiryForm";
+import { logger } from "@/server/observability/logger";
 import { getLeadTimeSettings, parseLeadTimeSettings } from "@/server/services/enquiries";
 
 export const metadata: Metadata = { title: "Enquire" };
@@ -10,7 +11,7 @@ export default async function EnquirePage() {
   // The notice only informs (decision/lead-time-rule §2.3): a settings read
   // failure falls back to the seed values rather than taking the form down.
   const leadTime = await getLeadTimeSettings().catch((error: unknown) => {
-    console.error("enquire: lead-time settings unavailable, using defaults", error);
+    logger.error({ err: error }, "enquire: lead-time settings unavailable, using defaults");
     return parseLeadTimeSettings({});
   });
   return (

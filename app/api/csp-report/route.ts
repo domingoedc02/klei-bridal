@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { logger } from "@/server/observability/logger";
 import { withPipeline } from "@/server/pipeline";
 import { requestIdOf } from "@/server/pipeline/request-id";
 import { budgets } from "@/server/ratelimit/budgets";
@@ -75,7 +76,7 @@ export function sanitizeReport(payload: unknown): SanitizedReport | null {
   };
 }
 
-/** Bounded, sanitized report sink. KBS-33 owns durable structured logging. */
+/** Bounded, sanitized report sink; lands in the structured log (KBS-33-1) for review in Dokploy. */
 export async function cspReportHandler(request: NextRequest): Promise<Response> {
   if (!acceptedTypes.has(mediaType(request))) return new Response(null, { status: 415 });
   const declared = Number(request.headers.get("content-length") ?? NaN);
@@ -95,13 +96,17 @@ export async function cspReportHandler(request: NextRequest): Promise<Response> 
   }
   const report = sanitizeReport(payload);
   if (!report) return new Response(null, { status: 400 });
-  console.info("csp_violation", {
-    // Same validation as the pipeline: a raw header could inject markup or a huge value into logs.
-    request_id: requestIdOf(request.headers),
-    reports: report.reports,
-    string_fields: report.stringFields,
-    numeric_fields: report.numericFields,
-  });
+  logger.info(
+    {
+      event: "csp_violation",
+      // Same validation as the pipeline: a raw header could inject markup or a huge value into logs.
+      request_id: requestIdOf(request.headers),
+      reports: report.reports,
+      string_fields: report.stringFields,
+      numeric_fields: report.numericFields,
+    },
+    "csp_violation",
+  );
   return NextResponse.json({ ok: true });
 }
 
