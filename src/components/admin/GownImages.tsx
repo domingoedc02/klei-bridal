@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { readApiError, readCsrfToken } from "./CategoryForm";
 
 // KBS-21-5. Client side of spec/api/admin-images. The server stays the
@@ -75,7 +75,19 @@ export default function GownImages({
   const [altDraft, setAltDraft] = useState<Record<string, string>>({});
   const latest = useRef<GownImage[] | null>(null);
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const itemRefCallbacks = useRef<Record<string, (element: HTMLLIElement | null) => void>>({});
+  const focusTarget = useRef<string | null>(null);
   const seq = useRef(0);
+
+  function itemRef(id: string) {
+    return (itemRefCallbacks.current[id] ??= (element) => {
+      itemRefs.current[id] = element;
+      if (element && focusTarget.current === id) {
+        element.focus();
+        focusTarget.current = null;
+      }
+    });
+  }
 
   const load = useCallback(async () => {
     const response = await fetch(base);
@@ -88,12 +100,21 @@ export default function GownImages({
     if (changed)
       setAnnounce(`Photo ${changed.sort_order + 1} ${STATUS_LABEL[changed.status].toLowerCase()}.`);
     latest.current = next;
-    setImages(next);
+    setImages([...next]);
   }, [base]);
 
   useEffect(() => {
     load().catch(() => setNotice("Could not load photos. Try again."));
   }, [load]);
+
+  useLayoutEffect(() => {
+    const targetId = focusTarget.current;
+    if (!targetId) return;
+    const target = itemRefs.current[targetId];
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    focusTarget.current = null;
+  }, [images]);
 
   const pending = images?.some((i) => i.status === "pending") ?? false;
   useEffect(() => {
@@ -143,7 +164,13 @@ export default function GownImages({
     for (const upload of batch) if (!upload.error) await send(upload);
   }
 
-  async function mutate(imageId: string, url: string, method: string, body?: unknown) {
+  async function mutate(
+    imageId: string,
+    url: string,
+    method: string,
+    body?: unknown,
+    focusId = imageId,
+  ) {
     setBusy((state) => ({ ...state, [imageId]: true }));
     setMutationError((state) => ({ ...state, [imageId]: "" }));
     try {
@@ -161,8 +188,8 @@ export default function GownImages({
         setMutationError((state) => ({ ...state, [imageId]: error.message }));
         return;
       }
+      focusTarget.current = focusId;
       await load();
-      requestAnimationFrame(() => itemRefs.current[imageId]?.focus());
     } catch {
       setMutationError((state) => ({
         ...state,
@@ -201,7 +228,10 @@ export default function GownImages({
 
   async function remove(image: GownImage) {
     if (!window.confirm("Delete this photo? This cannot be undone.")) return;
-    await mutate(image.id, `${base}/${encodeURIComponent(image.id)}`, "DELETE");
+    const at = images?.findIndex((item) => item.id === image.id) ?? -1;
+    const focusId = images?.[at + 1]?.id ?? images?.[at - 1]?.id;
+    if (!focusId) return;
+    await mutate(image.id, `${base}/${encodeURIComponent(image.id)}`, "DELETE", undefined, focusId);
   }
 
   const full = (images?.length ?? 0) + uploads.length >= maxImages;
@@ -272,9 +302,7 @@ export default function GownImages({
             return (
               <li
                 key={image.id}
-                ref={(element) => {
-                  itemRefs.current[image.id] = element;
-                }}
+                ref={itemRef(image.id)}
                 tabIndex={-1}
                 aria-label={`Photo ${image.sort_order + 1}`}
               >

@@ -2,17 +2,18 @@ import { expect, test } from "@playwright/test";
 
 const gownId = "0192a000-0000-7000-8000-000000000021";
 const base = `**/api/admin/gowns/${gownId}`;
-const rows = [0, 1, 2].map((i) => ({
-  id: `0192a000-0000-7000-8000-00000000010${i}`,
-  sort_order: i,
-  is_hero: i === 0,
-  alt_text: i === 0 ? "Front view" : null,
-  width: 10,
-  height: 10,
-  status: "ready",
-}));
+const makeRows = () =>
+  [0, 1, 2].map((i) => ({
+    id: `0192a000-0000-7000-8000-00000000010${i}`,
+    sort_order: i,
+    is_hero: i === 0,
+    alt_text: i === 0 ? "Front view" : null,
+    width: 10,
+    height: 10,
+    status: "ready" as const,
+  }));
 
-async function setup(page: import("@playwright/test").Page) {
+async function setup(page: import("@playwright/test").Page, rows: ReturnType<typeof makeRows>) {
   await page.route("**/api/admin/{silhouettes,materials,collections}", (r) =>
     r.fulfill({ json: { items: [] } }),
   );
@@ -49,7 +50,8 @@ async function noOverflow(page: import("@playwright/test").Page) {
 for (const width of [390, 1280]) {
   test(`reorder, hero, alt and delete work at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    await setup(page);
+    const rows = makeRows();
+    await setup(page, rows);
     const requests: string[] = [];
     await page.route(`${base}/images/reorder`, async (route) => {
       requests.push("reorder");
@@ -73,6 +75,7 @@ for (const width of [390, 1280]) {
         return route.fulfill({ json: rows[1] });
       }
       requests.push("delete");
+      rows.splice(1, 1);
       return route.fulfill({ status: 204 });
     });
 
@@ -97,13 +100,15 @@ for (const width of [390, 1280]) {
       .getByRole("button", { name: /Delete photo/ })
       .click();
     await expect.poll(() => requests).toContain("delete");
+    await expect(photos.getByRole("listitem")).toHaveCount(2);
     await expect(photos.getByRole("listitem").nth(1)).toBeFocused();
     await noOverflow(page);
   });
 }
 
 test("409 mutation shows server message next to image", async ({ page }) => {
-  await setup(page);
+  const rows = makeRows();
+  await setup(page, rows);
   await page.route(`${base}/images/${rows[1]!.id}/hero`, (route) =>
     route.fulfill({
       status: 409,
