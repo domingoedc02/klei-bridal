@@ -110,6 +110,7 @@ describe("src/config/env", () => {
     ["the same path", "./.data/images", "./.data/images"],
     ["the same path spelled differently", "/data/media/originals", "/data/media/x/../originals/"],
     ["the cache inside originals", "/data/media", "/data/media/derivatives"],
+    ["the cache in a child dir named ..cache", "/data/media", "/data/media/..cache"],
     ["originals inside the cache", "/data/media/derivatives/originals", "/data/media/derivatives"],
   ])("refuses to boot when the image paths overlap: %s", async (_label, originals, cache) => {
     setEnv({ IMAGE_ORIGINALS_PATH: originals, IMAGE_CACHE_PATH: cache });

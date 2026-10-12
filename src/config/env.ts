@@ -22,7 +22,7 @@
 // Throws at build time if this module is ever pulled into a client bundle —
 // including a "use client" file under app/, which the zone lint cannot see.
 import "server-only";
-import { relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 
 /** Any `NEXT_PUBLIC_` variable is compiled into the client bundle — never put a secret behind one. */
@@ -158,7 +158,8 @@ function loadEnv(): Env {
   const cache = resolve(parsedEnv.IMAGE_CACHE_PATH);
   const inside = (child: string, parent: string) => {
     const rel = relative(parent, child);
-    return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+    // First segment, not a prefix: `..cache` is a child, `../cache` is not.
+    return rel === "" || (rel.split(sep)[0] !== ".." && !isAbsolute(rel));
   };
   if (inside(originals, cache) || inside(cache, originals)) {
     throw new Error(
