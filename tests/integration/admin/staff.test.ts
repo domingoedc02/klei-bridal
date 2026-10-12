@@ -74,7 +74,7 @@ describe("GET /api/admin/staff", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     const raw = await res.text();
     expect(raw).not.toContain("secret-hash-value");
-    expect(raw).not.toMatch(/password|failed_login|locked_until/);
+    expect(raw).not.toMatch(/password_hash|temp_password_expires_at|failed_login|locked_until/);
     const row = JSON.parse(raw).items.find((r: { id: string }) => r.id === id);
     expect(row).toEqual({
       id,
@@ -107,7 +107,7 @@ describe("POST /api/admin/staff", () => {
     expect(body).toMatchObject({ name: "Created Person", email, is_active: true, password_change_pending: true });
     expect(JSON.stringify(body)).not.toContain(password);
     const [row] = await sql`SELECT password_hash, temp_password_expires_at FROM staff_users WHERE email = ${email}`;
-    expect(row!.password_hash).toMatch(/^\\$argon2id\\$/);
+    expect(row!.password_hash).toMatch(/^\$argon2id\$/);
     expect(new Date(row!.temp_password_expires_at).getTime()).toBeGreaterThan(Date.now() + 71 * 60 * 60 * 1000);
     ids.push(body.id);
     const [audit] = await sql`SELECT detail FROM audit_log WHERE entity_id = ${body.id} AND action = 'staff.create'`;
