@@ -250,3 +250,104 @@ export async function retryGownImage(
     };
   });
 }
+
+/** Locks the gown row: serialises every gallery write to one gown (same lock as upload). */
+async function lockGown(tx: Parameters<Parameters<Database["transaction"]>[0]>[0], gownId: string) {
+  const [gown] = await tx
+    .select({ id: gowns.id })
+    .from(gowns)
+    .where(eq(gowns.id, gownId))
+    .for("update");
+  if (!gown) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+}
+
+/**
+ * PATCH /admin/gowns/:id/images/reorder (KBS-21-3). `order` must be exactly
+ * the gown's image ids, each once — anything else is a 422 and nothing moves.
+ * The (gown_id, sort_order) unique index is not deferrable, so rows go to
+ * negative slots first, then to 0..n-1.
+ */
+export async function reorderGownImages(
+  gownId: string,
+  order: string[],
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+): Promise<{ images: GownImage[] }> {
+  await db.transaction(async (tx) => {
+    await lockGown(tx, gownId);
+    const current = await tx
+      .select({ id: gownImages.id })
+      .from(gownImages)
+      .where(eq(gownImages.gownId, gownId));
+    const ids = new Set(current.map((r) => r.id));
+    if (
+      new Set(order).size !== order.length ||
+      order.length !== ids.size ||
+      !order.every((id) => ids.has(id))
+    ) {
+      throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
+        fields: { order: "The photo order must list every photo of this gown exactly once." },
+      });
+    }
+    for (const [i, id] of order.entries()) {
+      await tx
+        .update(gownImages)
+        .set({ sortOrder: -(i + 1) })
+        .where(eq(gownImages.id, id));
+    }
+    await tx
+      .update(gownImages)
+      .set({ sortOrder: sql`-${gownImages.sortOrder} - 1` })
+      .where(eq(gownImages.gownId, gownId));
+    await tx.insert(auditLog).values({
+      occurredAt: new Date(),
+      actorUserId: actor.staff.id,
+      action: "gown.image_reorder",
+      entityType: "gown",
+      entityId: gownId,
+      detail: { order },
+      ip: inetOrNull(ip),
+    });
+  });
+  return listGownImages(gownId, db);
+}
+
+/**
+ * POST /admin/gowns/:id/images/:imageId/hero (KBS-21-3): unset the old hero,
+ * set this one, one transaction. The partial unique index is the guarantee;
+ * the gown lock just stops two staff racing into a 409.
+ */
+export async function setGownHero(
+  gownId: string,
+  imageId: string,
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+): Promise<{ images: GownImage[] }> {
+  await db.transaction(async (tx) => {
+    await lockGown(tx, gownId);
+    const [image] = await tx
+      .select({ id: gownImages.id, isHero: gownImages.isHero })
+      .from(gownImages)
+      .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)));
+    if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
+    if (image.isHero) return; // already the hero: no write, no audit noise
+    const [previous] = await tx
+      .update(gownImages)
+      .set({ isHero: false })
+      .where(and(eq(gownImages.gownId, gownId), eq(gownImages.isHero, true)))
+      .returning({ id: gownImages.id });
+    await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, imageId));
+    await tx.insert(auditLog).values({
+      occurredAt: new Date(),
+      actorUserId: actor.staff.id,
+      action: "gown.image_hero",
+      entityType: "gown",
+      entityId: gownId,
+      detail: { image_id: imageId, previous_image_id: previous?.id ?? null },
+      ip: inetOrNull(ip),
+    });
+  });
+  return listGownImages(gownId, db);
+}
