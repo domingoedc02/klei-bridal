@@ -16,6 +16,7 @@ export const staffUsers = pgTable(
     name: text("name").notNull(),
     email: text("email").notNull(),
     passwordHash: text("password_hash").notNull(),
+    tempPasswordExpiresAt: timestamp("temp_password_expires_at", { withTimezone: true }),
     isActive: boolean("is_active").notNull().default(true),
     failedLoginCount: integer("failed_login_count").notNull().default(0),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),

@@ -107,6 +107,7 @@ export interface ValidSession {
   sessionId: string;
   expiresAt: Date;
   staff: { id: string; name: string; email: string };
+  passwordChangeRequired?: boolean;
 }
 
 /**
@@ -141,6 +142,7 @@ export async function validateSession(
       staffId: staffUsers.id,
       name: staffUsers.name,
       email: staffUsers.email,
+      tempPasswordExpiresAt: staffUsers.tempPasswordExpiresAt,
     })
     .from(sessions)
     .innerJoin(staffUsers, eq(staffUsers.id, sessions.staffUserId))
@@ -166,6 +168,7 @@ export async function validateSession(
     sessionId: row.sessionId,
     expiresAt: row.expiresAt,
     staff: { id: row.staffId, name: row.name, email: row.email },
+    passwordChangeRequired: Boolean(row.tempPasswordExpiresAt && row.tempPasswordExpiresAt > now),
   };
 }
 

@@ -311,7 +311,7 @@ export async function changePassword(
   const result = await db.transaction(async (tx) => {
     await tx
       .update(staffUsers)
-      .set({ passwordHash, updatedAt: now })
+      .set({ passwordHash, tempPasswordExpiresAt: null, updatedAt: now })
       .where(eq(staffUsers.id, session.staff.id));
     const revokedOtherSessions = await revokeAllSessionsForUser(tx, session.staff.id, now, {
       exceptSessionId: session.sessionId,

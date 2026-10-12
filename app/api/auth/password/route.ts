@@ -91,4 +91,8 @@ async function handler(request: NextRequest) {
   return response;
 }
 
-export const POST = withPipeline(handler, { auth: "public", rateLimit: budgets.adminWrite });
+export const POST = withPipeline(handler, {
+  auth: "staff",
+  rateLimit: budgets.adminWrite,
+  passwordChangeExempt: true,
+});
