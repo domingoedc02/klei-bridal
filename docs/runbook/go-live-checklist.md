@@ -57,9 +57,33 @@ agreed and ready to run the moment `KBS-31` lands, not written at the last minut
       | Job | Test | Record |
       |---|---|---|
       | Disk check (`/` + `kbs-media` mountpoint) | warning, critical, and check-failure paths each email `ALERT_EMAIL` | who · date · result |
-      | External uptime + TLS expiry | monitor fires on a forced failure and clears | who · date · result |
+      | External uptime + TLS expiry | monitor fires on a forced failure and clears; `/e/<token>` and `/admin/*` are **not** monitored | who · date · result |
       | Builder cache prune (`30 5 * * 6`) | first scheduled run succeeds; volumes untouched | who · date · result |
-      | `image_jobs` queue check via the read-only role | role can `SELECT` from `image_jobs` and nothing else (an `UPDATE` is refused); password is not in the repo or the crontab | who · date · result |
+      | `image_jobs` queue alert | with the monitor's **dry-run** (never a real `image_jobs` row in production), a warning at >900 s and a critical at >3600 s oldest-pending each reach `ALERT_EMAIL`; the alert carries counts and age only | who · date · result |
+      | `image_jobs` read-only role | every check in the role list below passes | who · date · query outputs (never the password or connection string) |
+
+      Read-only role checks (`<role>` is the monitor role):
+
+      1. **As a superuser:**
+         ```sql
+         SELECT rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls
+           FROM pg_roles WHERE rolname = '<role>';
+         -- all false
+         SELECT roleid::regrole FROM pg_auth_members WHERE member = '<role>'::regrole;
+         -- zero rows: not in kbs_app, pg_read_all_data or any other role
+         SELECT table_name, privilege_type FROM information_schema.role_table_grants
+           WHERE grantee = '<role>';
+         -- exactly one row: image_jobs · SELECT
+         ```
+      2. **As `<role>`:** `SELECT count(*) FROM enquiries;` is refused with `permission denied`.
+         `UPDATE image_jobs SET status = status WHERE false;` is also refused; it changes no
+         rows, so it is safe on production.
+      3. **Password:** in `~/.pgpass` (mode `0600`) or the monitor's secret store. Never in the
+         repo, the crontab, the cron command line (`ps` shows it) or a `postgresql://user:pw@` URL.
+      4. Optional: `ALTER ROLE <role> SET default_transaction_read_only = on, statement_timeout = '5s';`
+
+      **Record the exact `ALERT_EMAIL` address every monitor sends to:** `<ALERT_EMAIL — client to supply>`.
+      It must match the Dokploy value and must not be a `STUDIO_ENQUIRY_EMAIL` inbox (PR #40).
 
       No record means it is not done. Owner: client; devops collects the records.
 - [ ] `IMAGE_ORIGINALS_PATH` ≠ `IMAGE_CACHE_PATH`: two **separate, non-nested** directories
