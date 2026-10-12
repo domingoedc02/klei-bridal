@@ -6,6 +6,7 @@ import { db as defaultDb, type Database } from "@/server/db/client";
 import { auditLog, gownImages, gowns, imageJobs } from "@/server/db/schema";
 import { originalPath, storeOriginal } from "@/server/media/contentAddress";
 import { lockOriginalPath } from "@/server/media/originalLock";
+import { removeOriginalIfUnreferenced } from "@/server/media/orphanSweep";
 import { sanitizeImage } from "@/server/media/upload";
 import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
@@ -350,4 +351,92 @@ export async function setGownHero(
     });
   });
   return listGownImages(gownId, db);
+}
+
+/** PATCH /admin/gowns/:id/images/:imageId (KBS-21-4): alt text only. */
+export async function updateGownImageAlt(
+  gownId: string,
+  imageId: string,
+  alt: string,
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+): Promise<GownImage> {
+  await db.transaction(async (tx) => {
+    const [image] = await tx
+      .update(gownImages)
+      .set({ altText: alt })
+      .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)))
+      .returning({ id: gownImages.id });
+    if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
+    await tx.insert(auditLog).values({
+      occurredAt: new Date(),
+      actorUserId: actor.staff.id,
+      action: "gown_image.alt_update",
+      entityType: "gown",
+      entityId: gownId,
+      detail: { image_id: imageId },
+      ip: inetOrNull(ip),
+    });
+  });
+  const { images } = await listGownImages(gownId, db);
+  return images.find((i) => i.id === imageId)!;
+}
+
+/**
+ * DELETE /admin/gowns/:id/images/:imageId (KBS-21-4). A published gown keeps
+ * at least one photo. A deleted hero hands over to the lowest sort_order in
+ * the same transaction. The original and its derivatives go after commit,
+ * and only if no other row shares the bytes; a failed unlink is logged and
+ * left for the orphan sweep, never rolls the delete back.
+ */
+export async function deleteGownImage(
+  gownId: string,
+  imageId: string,
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+): Promise<void> {
+  const path = await db.transaction(async (tx) => {
+    const [gown] = await tx
+      .select({ status: gowns.status })
+      .from(gowns)
+      .where(eq(gowns.id, gownId))
+      .for("update");
+    if (!gown) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+    const [image] = await tx
+      .delete(gownImages)
+      .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)))
+      .returning();
+    if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
+    const [next] = await tx
+      .select({ id: gownImages.id })
+      .from(gownImages)
+      .where(eq(gownImages.gownId, gownId))
+      .orderBy(asc(gownImages.sortOrder))
+      .limit(1);
+    if (!next && gown.status === "published") {
+      throw new PipelineError(
+        409,
+        "CONFLICT",
+        "A published gown needs at least one photo. Add another photo or unpublish the gown first.",
+      );
+    }
+    if (image.isHero && next) {
+      await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, next.id));
+    }
+    await tx.insert(auditLog).values({
+      occurredAt: new Date(),
+      actorUserId: actor.staff.id,
+      action: "gown_image.delete",
+      entityType: "gown",
+      entityId: gownId,
+      detail: { image_id: imageId, new_hero_image_id: image.isHero ? (next?.id ?? null) : null },
+      ip: inetOrNull(ip),
+    });
+    return image.originalPath;
+  });
+  await removeOriginalIfUnreferenced(path, db).catch((error) =>
+    console.error("image delete: original not removed, orphan sweep will retry:", error),
+  );
 }
