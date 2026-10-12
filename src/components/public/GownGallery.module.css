@@ -1,0 +1,155 @@
+/* KBS-13-4 — gown-detail gallery + gown-zoom (prototype b138498e, plan/design §2–3). */
+
+.gallery {
+  --ink: #2b2825;
+  --page: #f4f1eb;
+  --gold: #6e5420;
+  --ease-interaction: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Edge-to-edge single column below 1024px; the pdp-wrap column above. */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+@media (min-width: 1024px) {
+  .list {
+    gap: 8px;
+  }
+}
+
+.item {
+  margin: 0;
+}
+
+.zoomLink {
+  display: block;
+  cursor: zoom-in;
+}
+.zoomLink:focus-visible,
+.close:focus-visible,
+.arrow:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* Intrinsic width/height reserve the box; LQIP shows until the image paints. */
+.img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background-size: cover;
+  background-color: var(--page);
+}
+
+/* gown-zoom */
+.zoom {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--page);
+  color: var(--ink);
+  overflow: auto;
+  opacity: 0;
+  transition: opacity 220ms var(--ease-interaction);
+}
+.zoom[open] {
+  opacity: 1;
+}
+@starting-style {
+  .zoom[open] {
+    opacity: 0;
+  }
+}
+.zoom::backdrop {
+  background: var(--page);
+}
+
+.zoomImg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background-size: cover;
+  cursor: zoom-out;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+.close,
+.arrow {
+  position: fixed;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: var(--page);
+  color: var(--ink);
+  font:
+    500 14px/1 Inter,
+    system-ui,
+    sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  z-index: 1;
+}
+.close {
+  top: 12px;
+  right: 12px;
+  padding: 0 16px;
+}
+.arrow {
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 28px;
+  text-transform: none;
+}
+.prev {
+  left: 12px;
+}
+.next {
+  right: 12px;
+}
+/* < 600px: arrows hidden; swipe and keyboard still work. */
+@media (max-width: 599px) {
+  .arrow {
+    display: none;
+  }
+}
+
+.count {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 4px 12px;
+  background: var(--page);
+  font:
+    400 13px/1.4 Inter,
+    system-ui,
+    sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zoom {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .close,
+  .arrow,
+  .count {
+    border: 1px solid CanvasText;
+  }
+  .zoomLink:focus-visible,
+  .close:focus-visible,
+  .arrow:focus-visible {
+    outline-color: Highlight;
+  }
+}
