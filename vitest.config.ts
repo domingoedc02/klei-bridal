@@ -15,5 +15,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    // CI's dummy env, as defaults: a bare local `pnpm test` would otherwise refuse to boot.
+    setupFiles: ["tests/setup-env.ts"],
   },
 });
