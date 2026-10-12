@@ -91,4 +91,18 @@ describe("src/config/env", () => {
     const { env } = await loadEnvModule();
     expect(env.MAIL_FROM_ADDRESS).toBe("enquiries@mail.kleibridal.com");
   });
+
+  it("refuses to boot when ALERT_EMAIL is one of STUDIO_ENQUIRY_EMAIL (any case, any list position)", async () => {
+    setEnv({
+      STUDIO_ENQUIRY_EMAIL: "owner@kleibridal.com, studio@kleibridal.com",
+      ALERT_EMAIL: "Studio@KleiBridal.com",
+    });
+    await expect(loadEnvModule()).rejects.toThrow(/ALERT_EMAIL .* STUDIO_ENQUIRY_EMAIL/);
+  });
+
+  it("boots when ALERT_EMAIL is a separate inbox", async () => {
+    setEnv({ ALERT_EMAIL: "alerts@kleibridal.com" });
+    const { env } = await loadEnvModule();
+    expect(env.ALERT_EMAIL).toBe("alerts@kleibridal.com");
+  });
 });

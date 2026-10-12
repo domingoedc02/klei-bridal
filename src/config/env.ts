@@ -135,6 +135,20 @@ function loadEnv(): Env {
     }
   }
 
+  // Boot-time refusal (KBS-34 AC, KBS-33): delivery-failure alerts sent to
+  // the studio's own enquiry inbox are buried among enquiries — and when
+  // that inbox is the one bouncing, the alert never arrives at all.
+  if (parsedEnv.ALERT_EMAIL) {
+    const alert = parsedEnv.ALERT_EMAIL.trim().toLowerCase();
+    const studio = parsedEnv.STUDIO_ENQUIRY_EMAIL.split(",").map((v) => v.trim().toLowerCase());
+    if (studio.includes(alert)) {
+      throw new Error(
+        `ALERT_EMAIL ("${parsedEnv.ALERT_EMAIL}") is one of STUDIO_ENQUIRY_EMAIL — refusing to ` +
+          "boot. Delivery-failure alerts must go to a separate inbox from enquiries.",
+      );
+    }
+  }
+
   return parsedEnv;
 }
 
