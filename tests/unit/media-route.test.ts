@@ -18,6 +18,21 @@ describe("media derivative route", () => {
       params: Promise.resolve({ path: ["../originals", "x.jpg"] }),
     });
     expect(original.status).toBe(404);
+    const disguised = await GET(new Request("http://localhost"), {
+      params: Promise.resolve({ path: ["aa", "bb", `${hash}-social-1200x630.avif`] }),
+    });
+    expect(disguised.status).toBe(404);
+  });
+
+  it("serves the og:image social crop the worker writes (KBS-13)", async () => {
+    const social = ["aa", "bb", `${hash}-social-1200x630.jpg`];
+    await mkdir(join(variantsRoot(), "aa", "bb"), { recursive: true });
+    await writeFile(join(variantsRoot(), ...social), "social");
+    const response = await GET(new Request("http://localhost"), {
+      params: Promise.resolve({ path: social }),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
   });
 
   it("serves safe derivatives with immutable cache and content type", async () => {

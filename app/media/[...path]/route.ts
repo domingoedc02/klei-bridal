@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 
 import { variantsRoot } from "@/server/media/variants";
 
-const SAFE_PATH = /^(?:[a-f0-9]{2}\/){2}[a-f0-9]{64}\.(?:avif|webp|jpg)$/;
+const SAFE_PATH =
+  /^(?:[a-f0-9]{2}\/){2}[a-f0-9]{64}(?:\.(?:avif|webp)|(?:-social-1200x630)?\.jpg)$/;
 const CONTENT_TYPE: Record<string, string> = {
   avif: "image/avif",
   webp: "image/webp",

@@ -6,12 +6,16 @@ import { env } from "@/config/env";
 import { db } from "@/server/db/client";
 import { gownImages, imageJobs } from "@/server/db/schema";
 import { originalsRoot } from "@/server/media/contentAddress";
+import { sweepOrphanedOriginals } from "@/server/media/orphanSweep";
 import { generateSocialCrop } from "@/server/media/socialCrop";
 import { generateVariants, variantsRoot, type DerivativeManifest } from "@/server/media/variants";
 
 const MAX_ATTEMPTS = 3;
 const STALE_AFTER_MS = 15 * 60_000;
 const POLL_MS = 2_000;
+/** Documented window: a deleted gown's files are gone within 6 hours (decision/images §3). */
+const SWEEP_MS = 6 * 60 * 60_000;
+const SWEEP_AFTER_BOOT_MS = 60_000;
 
 type ClaimedJob = { id: string; gown_image_id: string; attempts: number; original_path: string };
 
@@ -96,6 +100,12 @@ export function startImageWorker() {
   }, POLL_MS);
   timer.unref();
   void processImageJobs().catch((error) => console.error("image worker:", error));
+
+  // Also run shortly after boot, so frequent redeploys cannot starve the sweep.
+  const sweep = () =>
+    void sweepOrphanedOriginals().catch((error) => console.error("orphan sweep:", error));
+  setTimeout(sweep, SWEEP_AFTER_BOOT_MS).unref();
+  setInterval(sweep, SWEEP_MS).unref();
 }
 
-export { MAX_ATTEMPTS, STALE_AFTER_MS, variantsRoot };
+export { MAX_ATTEMPTS, STALE_AFTER_MS, SWEEP_MS, variantsRoot };

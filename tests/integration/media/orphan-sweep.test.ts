@@ -8,6 +8,26 @@ import { env } from "@/config/env";
 import { db } from "@/server/db/client";
 import { originalsRoot } from "@/server/media/contentAddress";
 import { sweepOrphanedOriginals } from "@/server/media/orphanSweep";
+import { socialCropPath } from "@/server/media/socialCrop";
+import { derivativePaths, variantsRoot } from "@/server/media/variants";
+
+const exists = (path: string) =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
+
+/** Write every derivative the worker would produce for an original, so the sweep has something to remove. */
+async function writeDerivatives(original: string) {
+  const paths = [...derivativePaths(original), socialCropPath(original)].map((p) =>
+    join(variantsRoot(), p),
+  );
+  for (const path of paths) {
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, "derivative");
+  }
+  return paths;
+}
 
 const sql = postgres(env.DATABASE_URL, { max: 1 });
 const staffId = randomUUID();
@@ -68,6 +88,9 @@ describe("original orphan sweep", () => {
     await mkdir(join(originalsRoot(), "cc/dd"), { recursive: true });
     await writeFile(join(originalsRoot(), shared), "shared");
     await writeFile(join(originalsRoot(), orphan), "orphan");
+    const sharedDerivatives = await writeDerivatives(shared);
+    const orphanDerivatives = await writeDerivatives(orphan);
+    expect(orphanDerivatives).toHaveLength(19); // 6 widths × 3 formats + social crop
     const first = await gown();
     const second = await gown();
     await sql`INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
@@ -84,5 +107,9 @@ describe("original orphan sweep", () => {
     await expect(
       import("node:fs/promises").then(({ access }) => access(join(originalsRoot(), orphan))),
     ).rejects.toThrow();
+    // KBS-13 AC: a deleted gown's derivatives leave the disk with its original; shared ones stay.
+    for (const path of orphanDerivatives) expect(await exists(path)).toBe(false);
+    for (const path of sharedDerivatives) expect(await exists(path)).toBe(true);
+    for (const path of sharedDerivatives) await rm(path, { force: true });
   });
 });

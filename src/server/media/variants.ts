@@ -88,6 +88,16 @@ export async function generateVariants(originalAbsolutePath: string, originalRel
   return { manifest, lqip: `data:image/webp;base64,${lqip.toString("base64")}` };
 }
 
+/** Every derivative path generateVariants writes for one original (the orphan sweep removes them). */
+export function derivativePaths(originalRelativePath: string): string[] {
+  const source = sourceHash(originalRelativePath);
+  return VARIANT_WIDTHS.flatMap((width) =>
+    (["avif", "webp", "jpeg"] as const).map((format) =>
+      derivativePath(source, width, format, QUALITY[format]),
+    ),
+  );
+}
+
 export function variantsRoot() {
   return cacheRoot();
 }

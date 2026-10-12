@@ -1,5 +1,5 @@
 import "server-only";
-import { readdir, unlink } from "node:fs/promises";
+import { readdir, rm, unlink } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 import { eq } from "drizzle-orm";
@@ -9,6 +9,8 @@ import { gownImages } from "@/server/db/schema";
 
 import { lockOriginalPath } from "./originalLock";
 import { originalsRoot } from "./contentAddress";
+import { socialCropPath } from "./socialCrop";
+import { derivativePaths, variantsRoot } from "./variants";
 
 const ORIGINAL = /^(?:[a-f0-9]{2}\/){2}[a-f0-9]{64}\.(?:jpg|jpeg|png|webp|avif)$/i;
 
@@ -29,7 +31,9 @@ async function filesUnder(root: string, directory = root): Promise<FileEntry[]> 
 }
 
 /**
- * Remove content-addressed originals no longer referenced by any gown image.
+ * Remove content-addressed originals no longer referenced by any gown image,
+ * together with every derivative generated from them (decision/images §3:
+ * a deleted gown's files leave the disk within one sweep interval).
  *
  * The reference check runs in a transaction and locks every matching row before
  * deciding. Shared originals therefore survive while any gown still points at
@@ -49,6 +53,15 @@ export async function sweepOrphanedOriginals(
         .where(eq(gownImages.originalPath, candidate.relative));
       if (references.length > 0) return false;
 
+      // Derivatives first: a crash between the two leaves the original, so the next sweep retries.
+      // ponytail: paths are recomputed at today's widths/qualities; files from a retired
+      // width or quality stay behind. Add a manifest-diff sweep if those settings change.
+      const root = variantsRoot();
+      for (const path of [
+        ...derivativePaths(candidate.relative),
+        socialCropPath(candidate.relative),
+      ])
+        await rm(join(root, path), { force: true });
       try {
         await unlink(candidate.absolute);
         removed++;
