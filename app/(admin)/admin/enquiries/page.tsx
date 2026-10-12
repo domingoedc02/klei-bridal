@@ -1,13 +1,15 @@
 import { requireStaffPage } from "@/server/auth/page-session";
+import { EnquiryInbox } from "@/components/admin/EnquiryInbox";
 
-// Enquiry inbox — sorted by wedding date, gowns + chosen channel.
-// Opening one writes an audit_log row. Real implementation: KBS-23.
 export default async function AdminEnquiriesPage() {
   await requireStaffPage();
   return (
-    <main>
+    <main className="admin-page">
       <h1>Enquiries</h1>
-      <p>Admin enquiries placeholder (KBS-6) — real content lands with KBS-23.</p>
+      <p className="page-intro">
+        Prioritised by wedding date. Open detail to see snapshots and reply outside admin.
+      </p>
+      <EnquiryInbox />
     </main>
   );
 }
