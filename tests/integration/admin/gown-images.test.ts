@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { crc32 } from "node:zlib";
 import { NextRequest } from "next/server";
 import postgres from "postgres";
 import sharp from "sharp";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { POST as upload } from "../../../app/api/admin/gowns/[id]/images/route";
 import { SESSION_COOKIE, createSession } from "@/server/auth/session";
@@ -234,6 +234,25 @@ describe("hostile files", () => {
     expect(performance.now() - t0).toBeLessThan(1000);
   });
 
+  it("never starts a raster decode of a bomb: only the header is read (KBS-21 AC)", async () => {
+    const gown = await makeGown();
+    // Every decode path in sanitizeImage ends in toBuffer (rotate, re-encode);
+    // metadata() is the only call allowed to see the bomb.
+    const decode = vi.spyOn(sharp.prototype, "toBuffer");
+    const rotate = vi.spyOn(sharp.prototype, "rotate");
+    const header = vi.spyOn(sharp.prototype, "metadata");
+    try {
+      const res = await post(gown, [{ data: bombPng(), name: "bomb.png", type: "image/png" }]);
+      expect(res.status).toBe(422);
+      expect(header).toHaveBeenCalledTimes(1);
+      expect(rotate).not.toHaveBeenCalled();
+      expect(decode).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(await imagesOf(gown)).toHaveLength(0);
+  });
+
   it("413s a file over IMAGE_MAX_UPLOAD_BYTES", async () => {
     const gown = await makeGown();
     const big = Buffer.alloc(25 * 1024 * 1024 + 1, 0xff);
@@ -280,4 +299,39 @@ describe("hostile files", () => {
     );
     expect(res.status).toBe(413);
   });
+});
+
+/** chmod every directory under the originals root, so no new file can land anywhere in it. */
+function chmodTree(dir: string, mode: number) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) chmodTree(join(dir, entry.name), mode);
+  }
+  chmodSync(dir, mode);
+}
+
+describe("an unwritable media volume", () => {
+  // root ignores directory permissions, so this cannot be staged as root.
+  it.skipIf(process.getuid?.() === 0)(
+    "503s with a clear operational message and records nothing",
+    async () => {
+      const gown = await makeGown();
+      const data = await photo(17, 13, "#0a0b0c"); // unique bytes: a fresh content path
+      // Restore on the way down: the tree is shared with every other test.
+      chmodTree(originalsRoot(), 0o550);
+      let res: Response;
+      try {
+        res = await post(gown, [{ data }]);
+      } finally {
+        chmodTree(originalsRoot(), 0o750);
+      }
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.error.code).toBe("SERVICE_UNAVAILABLE");
+      expect(body.error.message).toMatch(/storage is full or unavailable, so nothing was saved/);
+      expect(JSON.stringify(body)).not.toContain(originalsRoot());
+      expect(await imagesOf(gown)).toHaveLength(0);
+      const audit = await sql`SELECT 1 FROM audit_log WHERE entity_id = ${gown}`;
+      expect(audit).toHaveLength(0);
+    },
+  );
 });

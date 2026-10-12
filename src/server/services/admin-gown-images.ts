@@ -30,6 +30,26 @@ function tooMany(existing: number): never {
   });
 }
 
+/** errnos meaning the media volume itself is unwritable or full (KBS-21 failure branch). */
+const VOLUME_ERRNOS = new Set(["EACCES", "EPERM", "EROFS", "ENOSPC", "EDQUOT"]);
+
+/**
+ * A full or read-only volume is an operational fault, not a bug: a clear 503
+ * the staff member can act on, rolled back so no row claims success, and
+ * reported (the mapper reports every 5xx) because a full disk takes Postgres
+ * down with it (spec/operations).
+ */
+function volumeError(error: unknown): never {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (!code || !VOLUME_ERRNOS.has(code)) throw error;
+  throw new PipelineError(
+    503,
+    "SERVICE_UNAVAILABLE",
+    "Photo storage is full or unavailable, so nothing was saved. Please tell the site administrator.",
+    { detail: `media volume ${code}`, cause: error },
+  );
+}
+
 async function imageCount(db: Database, gownId: string): Promise<number> {
   const [row] = await db
     .select({ n: count() })
@@ -83,7 +103,7 @@ export async function addGownImages(
   return db.transaction(async (tx) => {
     for (const image of stored) {
       await lockOriginalPath(tx, image.path);
-      await storeOriginal(image.data, image.ext);
+      await storeOriginal(image.data, image.ext).catch(volumeError);
     }
     // The gown row lock serialises concurrent uploads to one gown, so the
     // count, the next sort_order and the hero choice cannot race.
