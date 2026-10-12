@@ -313,6 +313,34 @@ describe("password change: rotation + revoke every other session", () => {
     expect(await validateSession(db, rotated)).not.toBeNull();
   });
 
+  it("rejects reusing current temporary password before changing state", async () => {
+    const staff = await makeStaff();
+    const token = await signedIn(staff);
+    await sql`UPDATE staff_users SET temp_password_expires_at = now() + interval '72 hours' WHERE id = ${staff.id}`;
+
+    const result = await changePassword({
+      token,
+      currentPassword: PASSWORD,
+      newPassword: PASSWORD,
+      ip: null,
+      userAgent: null,
+    });
+    expect(result).toEqual({ ok: false, reason: "same_password" });
+    expect(await validateSession(db, token)).not.toBeNull();
+    const [row] = await sql`SELECT temp_password_expires_at FROM staff_users WHERE id = ${staff.id}`;
+    expect(row!.temp_password_expires_at).not.toBeNull();
+  });
+
+  it("route: 422 naming the field for reusing current password", async () => {
+    const staff = await makeStaff();
+    const token = await signedIn(staff);
+    const response = await passwordRoute(
+      passwordRequest(token, { current_password: PASSWORD, new_password: PASSWORD }),
+    );
+    expect(response.status).toBe(422);
+    expect((await response.json()).error.fields).toHaveProperty("new_password");
+  });
+
   it("route: 422 naming the field for a wrong current password or a short new one", async () => {
     const staff = await makeStaff();
     const token = await signedIn(staff);

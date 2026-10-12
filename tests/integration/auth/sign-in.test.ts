@@ -297,6 +297,30 @@ describe("sign-out (KBS-27-1)", () => {
     expect(audit.map((a) => a.action)).toEqual(["staff.sign_in", "staff.sign_out"]);
   });
 
+  it("reports pending forced password change without disclosing credential data", async () => {
+    const staff = await makeStaff();
+    await sql`UPDATE staff_users SET temp_password_expires_at = now() + interval '72 hours' WHERE id = ${staff.id}`;
+    const response = await loginRoute(
+      new NextRequest("http://localhost:3000/api/auth/login", {
+        method: "POST",
+        headers: { ...csrfHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ email: staff.email, password: PASSWORD }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ password_change_required: true });
+  });
+
+  it("treats expired temporary password as generic invalid credentials", async () => {
+    const staff = await makeStaff();
+    await sql`UPDATE staff_users SET temp_password_expires_at = now() - interval '1 second' WHERE id = ${staff.id}`;
+    const result = await signIn(
+      { email: staff.email, password: PASSWORD, ip: ip(), userAgent: null },
+      deps(),
+    );
+    expect(result).toEqual({ ok: false, reason: "invalid_credentials" });
+  });
+
   it("route: sets the cookie on sign-in, and sign-out revokes the row then clears it", async () => {
     const staff = await makeStaff();
     const login = await loginRoute(
@@ -306,7 +330,8 @@ describe("sign-out (KBS-27-1)", () => {
         body: JSON.stringify({ email: staff.email, password: PASSWORD }),
       }),
     );
-    expect(login.status).toBe(204);
+    expect(login.status).toBe(200);
+    expect(await login.json()).toEqual({ password_change_required: false });
     const setCookie = login.headers.get("set-cookie")!;
     expect(setCookie).toMatch(/^kbs_session=[A-Za-z0-9_-]{43};/);
     expect(setCookie).toMatch(/Path=\//);

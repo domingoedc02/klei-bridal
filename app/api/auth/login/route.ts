@@ -77,7 +77,10 @@ async function handler(request: NextRequest) {
     }
   }
 
-  const response = new NextResponse(null, { status: 204 });
+  const response = NextResponse.json(
+    { password_change_required: result.passwordChangeRequired },
+    { status: 200, headers: { "cache-control": "no-store" } },
+  );
   response.cookies.set(SESSION_COOKIE, result.token, sessionCookieOptions(result.expiresAt));
   response.headers.set("cache-control", "no-store");
   return response;

@@ -43,6 +43,7 @@ export type SignInResult =
       token: string;
       expiresAt: Date;
       staff: { id: string; name: string; email: string };
+      passwordChangeRequired: boolean;
     }
   /** Unknown email, wrong password and disabled account all land here, identically. */
   | { ok: false; reason: "invalid_credentials" }
@@ -179,6 +180,9 @@ export async function signIn(
     token: session.token,
     expiresAt: session.expiresAt,
     staff: { id: usable.id, name: usable.name, email: usable.email },
+    passwordChangeRequired: Boolean(
+      usable.tempPasswordExpiresAt && usable.tempPasswordExpiresAt > now,
+    ),
   };
 }
 
@@ -216,6 +220,7 @@ export type ChangePasswordResult =
   | { ok: true; token: string; expiresAt: Date; revokedOtherSessions: number }
   | { ok: false; reason: "unauthenticated" }
   | { ok: false; reason: "wrong_current_password" }
+  | { ok: false; reason: "same_password" }
   | { ok: false; reason: "too_many_attempts"; retryAfterSeconds: number }
   | { ok: false; reason: "weak_password" | "password_too_common" | "unavailable" };
 
@@ -302,6 +307,9 @@ export async function changePassword(
       });
     });
     return { ok: false, reason: "too_many_attempts", retryAfterSeconds: retry };
+  }
+  if (input.newPassword === input.currentPassword) {
+    return { ok: false, reason: "same_password" };
   }
   const policy = await assertPasswordAllowed(input.newPassword, { email: session.staff.email });
   if (!policy.ok) return { ok: false, reason: policy.reason };

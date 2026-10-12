@@ -120,6 +120,47 @@ describe("withPipeline — session, CSRF and authorization (KBS-11-2)", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("blocks pending password sessions on non-exempt staff routes", async () => {
+    const handler = vi.fn(ok);
+    const response = await wrap(
+      handler,
+      staffOptions({
+        sessionValidator: async () => ({
+          sessionId: "session-id",
+          expiresAt: new Date("2030-01-01"),
+          staff: { id: "staff-id", name: "Staff", email: "staff@example.test" },
+          passwordChangeRequired: true,
+        }),
+      }),
+    ).route(post("{}", { cookie: `kbs_session=${"s".repeat(43)}` }));
+    await expectEnvelope(response, 403, "PASSWORD_CHANGE_REQUIRED");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("allows pending password sessions only when route opts in", async () => {
+    const handler = vi.fn(ok);
+    const csrf = mintCsrfToken();
+    const response = await wrap(
+      handler,
+      staffOptions({
+        allowPendingPasswordChange: true,
+        sessionValidator: async () => ({
+          sessionId: "session-id",
+          expiresAt: new Date("2030-01-01"),
+          staff: { id: "staff-id", name: "Staff", email: "staff@example.test" },
+          passwordChangeRequired: true,
+        }),
+      }),
+    ).route(
+      post("{}", {
+        cookie: `kbs_session=valid-session; kbs_csrf=${csrf}`,
+        "x-csrf-token": csrf,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it("injects an active staff principal into a staff handler", async () => {
     const handler = vi.fn(((_request: NextRequest, context: { principal: unknown }) =>
       Response.json(context)) as (request: NextRequest) => Response);
