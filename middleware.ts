@@ -6,7 +6,13 @@ import {
   CSP_REPORT_ONLY,
   generateNonce,
 } from "./src/server/pipeline/headers";
-import { CSRF_COOKIE, csrfCookieValue, csrfSetCookie, mintCsrfToken, validCsrfToken } from "./src/server/pipeline/csrf";
+import {
+  CSRF_COOKIE,
+  csrfCookieValue,
+  csrfSetCookie,
+  mintCsrfToken,
+  validCsrfToken,
+} from "./src/server/pipeline/csrf";
 import { requestIdOf } from "./src/server/pipeline/request-id";
 
 export const config = {

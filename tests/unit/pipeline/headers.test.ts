@@ -113,11 +113,17 @@ describe("headers are applied by the shared mechanism", () => {
     const token = /kbs_csrf=([^;]+)/.exec(first.headers.get("set-cookie") ?? "")?.[1];
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/);
     expect(first.headers.get("x-middleware-request-cookie")).toContain(`kbs_csrf=${token}`);
-    const again = middleware(new NextRequest("http://localhost/enquire", { headers: { cookie: `kbs_csrf=${token}` } }));
+    const again = middleware(
+      new NextRequest("http://localhost/enquire", { headers: { cookie: `kbs_csrf=${token}` } }),
+    );
     expect(again.headers.get("set-cookie")).toBeNull();
-    const forged = middleware(new NextRequest("http://localhost/enquire", { headers: { cookie: "kbs_csrf=x.y" } }));
+    const forged = middleware(
+      new NextRequest("http://localhost/enquire", { headers: { cookie: "kbs_csrf=x.y" } }),
+    );
     expect(forged.headers.get("set-cookie")).toContain("kbs_csrf=");
-    expect(middleware(new NextRequest("http://localhost/api/enquiries")).headers.get("set-cookie")).toBeNull();
+    expect(
+      middleware(new NextRequest("http://localhost/api/enquiries")).headers.get("set-cookie"),
+    ).toBeNull();
   });
 
   it("middleware applies the /e/* override", () => {
