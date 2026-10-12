@@ -3,7 +3,8 @@ import { NextRequest } from "next/server";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { PATCH as patch } from "../../../app/api/admin/enquiries/[id]/route";
+import { GET as detail, PATCH as patch } from "../../../app/api/admin/enquiries/[id]/route";
+import { GET as list } from "../../../app/api/admin/enquiries/route";
 import { POST as erase } from "../../../app/api/admin/enquiries/[id]/erase/route";
 import { SESSION_COOKIE, createSession } from "@/server/auth/session";
 import { db, type Database } from "@/server/db/client";
@@ -67,6 +68,11 @@ const auditOf = (id: string, action: string) =>
 const rowOf = async (id: string) => (await sql`SELECT * FROM enquiries WHERE id = ${id}`)[0]!;
 const gownsOf = (id: string) => sql`SELECT * FROM enquiry_gowns WHERE enquiry_id = ${id}`;
 const valid = { confirm: true, reason: "data_subject_request" };
+function getReq(url: string) {
+  return new NextRequest(`http://localhost:3000${url}`, {
+    headers: { ...csrfHeaders(`${SESSION_COOKIE}=${session}`), "x-real-ip": "203.0.113.32" },
+  });
+}
 
 beforeAll(async () => {
   staffId = randomUUID();
@@ -242,5 +248,44 @@ describe("anonymiseEnquiry (retention caller, KBS-30)", () => {
         ip: null,
       },
     ]);
+  });
+});
+
+describe("KBS-23-3 UI contract: what the screens receive", () => {
+  it("list rows carry no message, email, phone or attribution, before or after erase", async () => {
+    const { id, pii } = await enquiry();
+    const erased = await enquiry();
+    expect((await doErase(erased.id, valid)).status).toBe(200);
+    for (const target of [{ id, pii }, erased]) {
+      const res = await list(getReq(`/api/admin/enquiries?search=${target.id}@bride`), {} as never);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      const raw = await res.text();
+      for (const k of ["message", "email", "contact_number", "utm_source", "referrer_host"]) {
+        expect(raw).not.toContain(`"${k}"`);
+      }
+      for (const v of [pii.email, pii.phone, pii.message, pii.utm, pii.referrer]) {
+        expect(raw).not.toContain(v);
+      }
+    }
+  });
+
+  it("erased detail returns no name, contact, email, message or attribution", async () => {
+    const { id, pii } = await enquiry();
+    expect((await doErase(id, valid)).status).toBe(200);
+    const res = await detail(getReq(`/api/admin/enquiries/${id}`), ctx(id));
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    const body = JSON.parse(raw);
+    expect(body).toMatchObject({
+      is_erased: true,
+      first_name: null,
+      last_name: null,
+      contact_number: null,
+      email: null,
+      message: null,
+      utm_source: null,
+      referrer_host: null,
+    });
+    for (const v of Object.values(pii)) expect(raw).not.toContain(v);
   });
 });

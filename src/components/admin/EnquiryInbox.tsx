@@ -45,20 +45,30 @@ export function EnquiryInbox() {
   const current = useSearchParams();
   const [body, setBody] = useState<ListBody | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(current.get("search") ?? "");
   const [status, setStatus] = useState(current.get("status") ?? "");
   const [band, setBand] = useState(current.get("band") ?? "");
 
   useEffect(() => {
-    const params = new URLSearchParams(current.toString());
-    fetch(`/api/admin/enquiries?${params}`)
+    // New URL state: drop the old rows and error first, and ignore a slower earlier response.
+    const controller = new AbortController();
+    setBody(null);
+    setNotice(null);
+    setLoading(true);
+    fetch(`/api/admin/enquiries?${current.toString()}`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error((await readApiError(response)).message);
         setBody((await response.json()) as ListBody);
       })
-      .catch((error: unknown) =>
-        setNotice(error instanceof Error ? error.message : "Could not load enquiries."),
-      );
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setNotice(error instanceof Error ? error.message : "Could not load enquiries.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [current]);
 
   function apply(event: React.FormEvent) {
@@ -104,6 +114,11 @@ export function EnquiryInbox() {
         </label>
         <button type="submit">Apply filters</button>
       </form>
+      {loading ? (
+        <p className="loading" role="status">
+          Loading enquiries…
+        </p>
+      ) : null}
       {notice ? (
         <p className="notice" role="alert">
           {notice}
@@ -114,7 +129,7 @@ export function EnquiryInbox() {
           No enquiries match these filters.
         </p>
       ) : null}
-      <ul className="enquiry-list" aria-label="Enquiries">
+      <ul className="enquiry-list" aria-label="Enquiries" aria-busy={loading}>
         {body?.items.map((row) => (
           <li key={row.id}>
             <Link className="enquiry-link" href={`/admin/enquiries/${row.id}`}>
