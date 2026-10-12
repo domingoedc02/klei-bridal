@@ -5,14 +5,19 @@ import sharp from "sharp";
 
 import { variantsRoot } from "./variants";
 
-/** Create the JPEG Open Graph crop. Relative path is content-addressed by source. */
+/** Cache-relative path of an original's Open Graph crop, content-addressed by source. */
+export function socialCropPath(originalRelativePath: string) {
+  const source = /([a-f0-9]{64})\.[a-z]+$/i.exec(originalRelativePath)?.[1];
+  if (!source) throw new Error("Original path is not content-addressed.");
+  return join(source.slice(0, 2), source.slice(2, 4), `${source}-social-1200x630.jpg`);
+}
+
+/** Create the JPEG Open Graph crop. */
 export async function generateSocialCrop(
   originalAbsolutePath: string,
   originalRelativePath: string,
 ) {
-  const source = /([a-f0-9]{64})\.[a-z]+$/i.exec(originalRelativePath)?.[1];
-  if (!source) throw new Error("Original path is not content-addressed.");
-  const relative = join(source.slice(0, 2), source.slice(2, 4), `${source}-social-1200x630.jpg`);
+  const relative = socialCropPath(originalRelativePath);
   const target = join(variantsRoot(), relative);
   try {
     await access(target);
