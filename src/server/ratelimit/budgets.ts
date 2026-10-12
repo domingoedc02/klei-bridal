@@ -91,4 +91,13 @@ export const budgets = {
     failMode: "closed",
     onExceeded: "429",
   },
+  // Resend's delivery events. Fails OPEN: a limiter outage must not drop a studio-bounce alert.
+  mailWebhook: {
+    name: "mail-webhook",
+    dimension: "ip",
+    limit: 120,
+    windowSec: 60,
+    failMode: "open",
+    onExceeded: "429",
+  },
 } as const satisfies Record<string, Budget>;
