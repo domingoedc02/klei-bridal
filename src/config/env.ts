@@ -22,6 +22,7 @@
 // Throws at build time if this module is ever pulled into a client bundle —
 // including a "use client" file under app/, which the zone lint cannot see.
 import "server-only";
+import { relative, resolve } from "node:path";
 import { z } from "zod";
 
 /** Any `NEXT_PUBLIC_` variable is compiled into the client bundle — never put a secret behind one. */
@@ -147,6 +148,24 @@ function loadEnv(): Env {
           "boot. Delivery-failure alerts must go to a separate inbox from enquiries.",
       );
     }
+  }
+
+  // Boot-time refusal (KBS-34, security-eng): /media serves `<sha256>.jpg`
+  // from the cache root and originals use the same naming, so overlapping
+  // roots would publish the photographer's unprocessed masters; and the
+  // originals orphan sweep would delete derivatives. Nested counts as overlap.
+  const originals = resolve(parsedEnv.IMAGE_ORIGINALS_PATH);
+  const cache = resolve(parsedEnv.IMAGE_CACHE_PATH);
+  const inside = (child: string, parent: string) => {
+    const rel = relative(parent, child);
+    return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+  };
+  if (inside(originals, cache) || inside(cache, originals)) {
+    throw new Error(
+      `IMAGE_ORIGINALS_PATH ("${parsedEnv.IMAGE_ORIGINALS_PATH}") and IMAGE_CACHE_PATH ` +
+        `("${parsedEnv.IMAGE_CACHE_PATH}") overlap — refusing to boot. They must be separate, ` +
+        "non-nested directories, or /media could serve unprocessed originals.",
+    );
   }
 
   return parsedEnv;
