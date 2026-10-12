@@ -8,6 +8,7 @@ import {
 import { budgets } from "../../../src/server/ratelimit/budgets";
 import { withPipeline, type PipelineOptions } from "../../../src/server/pipeline";
 import type { RateLimitStore } from "../../../src/server/ratelimit/store";
+import { logger } from "../../../src/server/observability/logger";
 
 type NextRequestInit = NonNullable<ConstructorParameters<typeof NextRequest>[1]>;
 const URL_ = "http://localhost/api/csp-report";
@@ -64,7 +65,7 @@ describe("CSP report sink", () => {
   });
 
   it("strips unknown fields and logs only bounded counts", async () => {
-    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, "info").mockImplementation(() => undefined);
     const response = await POST(
       request(
         JSON.stringify({
@@ -76,19 +77,23 @@ describe("CSP report sink", () => {
       options(okStore),
     );
     expect(response.status).toBe(200);
-    expect(log).toHaveBeenCalledWith("csp_violation", {
-      request_id: expect.any(String),
-      string_fields: 2,
-      numeric_fields: 0,
-      reports: 1,
-    });
+    expect(log).toHaveBeenCalledWith(
+      {
+        event: "csp_violation",
+        request_id: expect.any(String),
+        string_fields: 2,
+        numeric_fields: 0,
+        reports: 1,
+      },
+      "csp_violation",
+    );
     expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
     log.mockRestore();
   });
 
   it("never logs an unvalidated x-request-id", async () => {
     // Fetch Headers already refuse CR/LF, so markup and size are what reach the route.
-    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, "info").mockImplementation(() => undefined);
     for (const hostile of ["<script>alert(1)</script>", "a".repeat(65)]) {
       const response = await POST(
         request(JSON.stringify({ "document-uri": "https://example.test" }), undefined, {
@@ -100,7 +105,7 @@ describe("CSP report sink", () => {
       expect(JSON.stringify(log.mock.calls)).not.toContain(hostile);
     }
     const requestIds = log.mock.calls.map(
-      ([, entry]) => (entry as { request_id: string }).request_id,
+      ([entry]) => (entry as unknown as { request_id: string }).request_id,
     );
     for (const id of requestIds) expect(id).toMatch(/^[A-Za-z0-9-]{1,64}$/);
     log.mockRestore();

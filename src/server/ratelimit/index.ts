@@ -1,5 +1,6 @@
 import Redis from "iovalkey";
 import { env } from "../../config/env";
+import { logger } from "../observability/logger";
 import { createValkeyStore, valkeyOptions, type RateLimitStore } from "./store";
 
 let store: RateLimitStore | undefined;
@@ -10,7 +11,7 @@ export function getValkeyClient(): Redis {
   if (!client) {
     client = new Redis(env.REDIS_URL, valkeyOptions);
     // Without a listener iovalkey prints "Unhandled error event" per reconnect.
-    client.on("error", (error: Error) => console.error("valkey:", error.message));
+    client.on("error", (error: Error) => logger.error({ err: error }, "valkey_error"));
   }
   return client;
 }

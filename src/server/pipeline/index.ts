@@ -5,7 +5,7 @@ import type { RateLimitStore } from "../ratelimit/store";
 import { SESSION_COOKIE, SESSION_TOKEN_PATTERN, validateSession } from "../auth/session";
 import { clientIp } from "../ratelimit/client-ip";
 import { defaultBodyLimits, enforceBodyLimit, type BodyLimits } from "./body-limit";
-import { consoleReporter, mapError, type Reporter } from "./error-mapper";
+import { defaultReporter, mapError, type Reporter } from "./error-mapper";
 import { applySecurityHeaders } from "./headers";
 import { requestIdOf } from "./request-id";
 import { enforceRateLimit } from "./rate-limit";
@@ -121,7 +121,7 @@ export function withPipeline<C>(
   if (options.csrf === false && options.auth !== "public") {
     throw new Error("withPipeline: csrf: false is allowed on public routes only");
   }
-  const report = options.report ?? consoleReporter;
+  const report = options.report ?? defaultReporter;
 
   return async (request, context) => {
     const requestId = requestIdOf(request.headers);

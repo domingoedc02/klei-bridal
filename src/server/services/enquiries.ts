@@ -11,6 +11,8 @@ import {
   type EnquiryMailDeps,
 } from "@/server/mail/enquiry";
 import { enquiries, enquiryGowns, gowns, settings } from "@/server/db/schema";
+import { logger } from "@/server/observability/logger";
+import { captureError } from "@/server/observability/sentry";
 import { PipelineError } from "@/server/pipeline/errors";
 import { daysBetween, isIsoDate, isValidTimeZone, todayIn } from "@/shared/dates";
 import {
@@ -310,10 +312,11 @@ export async function submitEnquiry(
       ...deps.mail,
       db,
     }).catch((error: unknown) => {
-      console.error("[mail] enquiry dispatch failed", {
-        enquiryId: transactionResult.mail?.enquiryId,
-        error,
-      });
+      logger.error(
+        { enquiry_id: transactionResult.mail?.enquiryId, err: error },
+        "mail: enquiry dispatch failed",
+      );
+      captureError(error);
     });
   }
   return transactionResult.result;
