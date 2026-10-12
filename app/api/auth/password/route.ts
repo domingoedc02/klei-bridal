@@ -94,5 +94,5 @@ async function handler(request: NextRequest) {
 export const POST = withPipeline(handler, {
   auth: "staff",
   rateLimit: budgets.adminWrite,
-  passwordChangeExempt: true,
+  allowPendingPasswordChange: true,
 });

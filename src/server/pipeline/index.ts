@@ -33,8 +33,8 @@ export { requestIdOf } from "./request-id";
 export { validate } from "./validation";
 
 export interface PipelineOptions {
-  /** Password-change gate exemptions are limited to auth recovery routes. */
-  passwordChangeExempt?: boolean;
+  /** Explicit opt-in for the only routes usable during forced password change. */
+  allowPendingPasswordChange?: boolean;
   /**
    * Explicit on every route — there is no default, so a staff route can never
    * be public by omission. Session lookup is KBS-11-2; until it lands every
@@ -144,7 +144,7 @@ export function withPipeline<C>(
         ? await options.sessionValidator(request.cookies.get(SESSION_COOKIE)?.value)
         : await validateSession(db, request.cookies.get(SESSION_COOKIE)?.value);
       if (options.auth === "staff") {
-        requireStaff(principal, { passwordChangeExempt: options.passwordChangeExempt });
+        requireStaff(principal, { passwordChangeExempt: options.allowPendingPasswordChange });
       }
       if (isStateChanging(request) && options.csrf !== false) {
         if (isChannelBeacon(request)) requireSameOrigin(request, true);

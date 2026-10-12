@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import CategoryList from "@/components/admin/CategoryList";
+import { requireStaffPage } from "@/server/auth/page-session";
 
 type CategoryType = "silhouettes" | "materials" | "collections";
 const types: CategoryType[] = ["silhouettes", "materials", "collections"];
@@ -10,6 +11,7 @@ export default async function AdminCategoryTypePage({
 }: {
   params: Promise<{ type: string }>;
 }) {
+  await requireStaffPage();
   const { type } = await params;
   if (!types.includes(type as CategoryType)) notFound();
   return (

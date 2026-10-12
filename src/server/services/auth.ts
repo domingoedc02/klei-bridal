@@ -119,7 +119,11 @@ export async function signIn(
     input.password,
   );
 
-  if (!usable || !passwordOk) {
+  if (
+    !usable ||
+    !passwordOk ||
+    (usable.tempPasswordExpiresAt !== null && usable.tempPasswordExpiresAt <= now)
+  ) {
     let newLock: Date | null;
     try {
       newLock = await recordLoginFailure(store, input.ip, email, now);

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, gt, isNull, lte, ne } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, ne, or } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import type { Database } from "@/server/db/client";
@@ -154,6 +154,7 @@ export async function validateSession(
         gt(sessions.createdAt, new Date(now.getTime() - SESSION_ABSOLUTE_TTL_MS)),
         gt(sessions.lastSeenAt, new Date(now.getTime() - SESSION_IDLE_TIMEOUT_MS)),
         eq(staffUsers.isActive, true),
+        or(isNull(staffUsers.tempPasswordExpiresAt), gt(staffUsers.tempPasswordExpiresAt, now)),
       ),
     )
     .limit(1);

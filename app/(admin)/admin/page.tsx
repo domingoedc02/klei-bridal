@@ -1,6 +1,9 @@
+import { requireStaffPage } from "@/server/auth/page-session";
+
 // Dashboard: this month / last month, source split, chat-channel split,
 // unread + oldest unread. Real content: KBS-26.
-export default function AdminDashboardPage() {
+export default async function AdminDashboardPage() {
+  await requireStaffPage();
   return (
     <main>
       <h1>Dashboard</h1>
