@@ -6,7 +6,7 @@ import { readMultipart, withPipeline, type Principal } from "@/server/pipeline";
 import { defaultBodyLimits } from "@/server/pipeline/body-limit";
 import { budgets } from "@/server/ratelimit/budgets";
 import { clientIp } from "@/server/ratelimit/client-ip";
-import { addGownImages } from "@/server/services/admin-gown-images";
+import { addGownImages, listGownImages } from "@/server/services/admin-gown-images";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,3 +36,11 @@ export const POST = withPipeline(handler, {
   params: Params,
   bodyLimits: limits,
 });
+
+async function getHandler(_request: NextRequest, context: Context) {
+  const { id } = await context.params;
+  return Response.json(await listGownImages(id));
+}
+
+// Polled while encodes drain; a read, so no write budget (same as GET /admin/gowns/:id).
+export const GET = withPipeline(getHandler, { auth: "staff", rateLimit: null, params: Params });
