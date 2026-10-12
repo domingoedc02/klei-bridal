@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { altFor, heroFirst, largest, srcSet, type GalleryImage } from "@/shared/images";
 import { GALLERY_SIZES } from "@/components/public/GownGallery";
 
-const row = (w: number) => ({ avif: `aa/bb/${w}.avif`, webp: `aa/bb/${w}.webp`, jpeg: `aa/bb/${w}.jpg` });
+const row = (w: number) => ({
+  avif: `aa/bb/${w}.avif`,
+  webp: `aa/bb/${w}.webp`,
+  jpeg: `aa/bb/${w}.jpg`,
+});
 const image: GalleryImage = {
   id: "1",
   altText: "  ",
@@ -11,8 +15,13 @@ const image: GalleryImage = {
   lqip: "data:image/webp;base64,AAAA",
   isHero: false,
   derivatives: {
-    "320": row(320), "480": row(480), "768": row(768), "1024": row(1024),
-    "1440": row(1440), "2048": row(2048), social: { jpeg: "cc/dd/social.jpg" },
+    "320": row(320),
+    "480": row(480),
+    "768": row(768),
+    "1024": row(1024),
+    "1440": row(1440),
+    "2048": row(2048),
+    social: { jpeg: "cc/dd/social.jpg" },
   },
 };
 
@@ -40,7 +49,11 @@ describe("gallery image helpers (KBS-13-4, decision/images §2.2)", () => {
   it("falls back to generated alt text; puts the hero first", () => {
     expect(altFor(image, "Celestine", 2, 8)).toBe("Celestine — photograph 3 of 8");
     expect(altFor({ altText: "Back and train" }, "Celestine", 0, 8)).toBe("Back and train");
-    const list = [{ isHero: false, n: 1 }, { isHero: true, n: 2 }, { isHero: false, n: 3 }];
+    const list = [
+      { isHero: false, n: 1 },
+      { isHero: true, n: 2 },
+      { isHero: false, n: 3 },
+    ];
     expect(heroFirst(list).map((x) => x.n)).toEqual([2, 1, 3]);
     expect(heroFirst([{ isHero: false, n: 1 }]).map((x) => x.n)).toEqual([1]);
   });

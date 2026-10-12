@@ -81,10 +81,20 @@ export default function ZoomView({
       </picture>
       {total > 1 ? (
         <>
-          <button type="button" className={`${styles.arrow} ${styles.prev}`} onClick={() => go(-1)} aria-label="Previous photograph">
+          <button
+            type="button"
+            className={`${styles.arrow} ${styles.prev}`}
+            onClick={() => go(-1)}
+            aria-label="Previous photograph"
+          >
             ‹
           </button>
-          <button type="button" className={`${styles.arrow} ${styles.next}`} onClick={() => go(1)} aria-label="Next photograph">
+          <button
+            type="button"
+            className={`${styles.arrow} ${styles.next}`}
+            onClick={() => go(1)}
+            aria-label="Next photograph"
+          >
             ›
           </button>
         </>

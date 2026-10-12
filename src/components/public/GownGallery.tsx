@@ -13,7 +13,13 @@ import ZoomView from "./ZoomView";
  */
 export const GALLERY_SIZES = "(min-width: 1440px) 860px, (min-width: 1024px) 60vw, 100vw";
 
-export default function GownGallery({ gownName, images }: { gownName: string; images: GalleryImage[] }) {
+export default function GownGallery({
+  gownName,
+  images,
+}: {
+  gownName: string;
+  images: GalleryImage[];
+}) {
   const ordered = heroFirst(images);
   const [open, setOpen] = useState<number | null>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -72,7 +78,8 @@ export default function GownGallery({ gownName, images }: { gownName: string; im
                 className={styles.zoomLink}
                 aria-label={`Zoom: ${alt}`}
                 onClick={(event) => {
-                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0)
+                    return;
                   event.preventDefault();
                   show(i, event.currentTarget);
                 }}

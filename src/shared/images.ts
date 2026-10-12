@@ -26,7 +26,11 @@ type Format = "avif" | "webp" | "jpeg";
  * width above the original is really the original width: the descriptor is
  * clamped and duplicates dropped, so the browser never trusts a lie.
  */
-export function srcSet(image: Pick<GalleryImage, "derivatives" | "width">, format: Format, maxWidth = ZOOM_WIDTH): string {
+export function srcSet(
+  image: Pick<GalleryImage, "derivatives" | "width">,
+  format: Format,
+  maxWidth = ZOOM_WIDTH,
+): string {
   const seen = new Set<number>();
   return Object.keys(image.derivatives)
     .map(Number)
@@ -43,7 +47,11 @@ export function srcSet(image: Pick<GalleryImage, "derivatives" | "width">, forma
 }
 
 /** The single largest variant ≤ maxWidth in a format, for `src` fallbacks and no-JS zoom links. */
-export function largest(image: Pick<GalleryImage, "derivatives">, format: Format, maxWidth = ZOOM_WIDTH): string | undefined {
+export function largest(
+  image: Pick<GalleryImage, "derivatives">,
+  format: Format,
+  maxWidth = ZOOM_WIDTH,
+): string | undefined {
   const w = Object.keys(image.derivatives)
     .map(Number)
     .filter((n) => Number.isInteger(n) && n <= maxWidth && image.derivatives[String(n)]?.[format])
@@ -52,7 +60,12 @@ export function largest(image: Pick<GalleryImage, "derivatives">, format: Format
 }
 
 /** decision/images §6: caption is alt text; generated fallback so an upload is never blocked. */
-export function altFor(image: Pick<GalleryImage, "altText">, gownName: string, index: number, total: number): string {
+export function altFor(
+  image: Pick<GalleryImage, "altText">,
+  gownName: string,
+  index: number,
+  total: number,
+): string {
   const alt = image.altText?.trim();
   return alt ? alt : `${gownName} — photograph ${index + 1} of ${total}`;
 }

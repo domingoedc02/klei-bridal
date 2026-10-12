@@ -16,10 +16,14 @@
   gap: 4px;
 }
 @media (min-width: 1024px) {
-  .list { gap: 8px; }
+  .list {
+    gap: 8px;
+  }
 }
 
-.item { margin: 0; }
+.item {
+  margin: 0;
+}
 
 .zoomLink {
   display: block;
@@ -56,11 +60,17 @@
   opacity: 0;
   transition: opacity 220ms var(--ease-interaction);
 }
-.zoom[open] { opacity: 1; }
-@starting-style {
-  .zoom[open] { opacity: 0; }
+.zoom[open] {
+  opacity: 1;
 }
-.zoom::backdrop { background: var(--page); }
+@starting-style {
+  .zoom[open] {
+    opacity: 0;
+  }
+}
+.zoom::backdrop {
+  background: var(--page);
+}
 
 .zoomImg {
   display: block;
@@ -79,19 +89,37 @@
   border: 0;
   background: var(--page);
   color: var(--ink);
-  font: 500 14px/1 Inter, system-ui, sans-serif;
+  font:
+    500 14px/1 Inter,
+    system-ui,
+    sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   cursor: pointer;
   z-index: 1;
 }
-.close { top: 12px; right: 12px; padding: 0 16px; }
-.arrow { top: 50%; transform: translateY(-50%); font-size: 28px; text-transform: none; }
-.prev { left: 12px; }
-.next { right: 12px; }
+.close {
+  top: 12px;
+  right: 12px;
+  padding: 0 16px;
+}
+.arrow {
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 28px;
+  text-transform: none;
+}
+.prev {
+  left: 12px;
+}
+.next {
+  right: 12px;
+}
 /* < 600px: arrows hidden; swipe and keyboard still work. */
 @media (max-width: 599px) {
-  .arrow { display: none; }
+  .arrow {
+    display: none;
+  }
 }
 
 .count {
@@ -102,13 +130,26 @@
   margin: 0;
   padding: 4px 12px;
   background: var(--page);
-  font: 400 13px/1.4 Inter, system-ui, sans-serif;
+  font:
+    400 13px/1.4 Inter,
+    system-ui,
+    sans-serif;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .zoom { transition: none; }
+  .zoom {
+    transition: none;
+  }
 }
 @media (forced-colors: active) {
-  .close, .arrow, .count { border: 1px solid CanvasText; }
-  .zoomLink:focus-visible, .close:focus-visible, .arrow:focus-visible { outline-color: Highlight; }
+  .close,
+  .arrow,
+  .count {
+    border: 1px solid CanvasText;
+  }
+  .zoomLink:focus-visible,
+  .close:focus-visible,
+  .arrow:focus-visible {
+    outline-color: Highlight;
+  }
 }
