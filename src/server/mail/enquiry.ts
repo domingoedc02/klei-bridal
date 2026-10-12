@@ -101,8 +101,9 @@ function lines(data: EnquiryEmailData, studio: boolean): string {
     `Contact number: ${text(data.contactNumber)}`,
     `Email: ${text(data.email)}`,
     `Wedding date: ${text(data.weddingDate)}`,
-    `Lead-time band: ${text(data.leadTimeBand)}`,
-    data.notice ? `Notice shown: ${text(data.notice)}` : "",
+    // Internal triage fields: studio copy only (KBS-17 AC: bride gets only what she typed).
+    studio ? `Lead-time band: ${text(data.leadTimeBand)}` : "",
+    studio && data.notice ? `Notice shown: ${text(data.notice)}` : "",
     "Selected gowns:",
     gowns,
     data.message ? `Message:\n${text(data.message)}` : "Message: None",
@@ -125,7 +126,9 @@ function rows(data: EnquiryEmailData, studio: boolean): string {
     `<p><strong>Reference:</strong> ${html(data.reference)}</p>`,
     `<p><strong>Name:</strong> ${html(`${data.firstName} ${data.lastName}`)}</p>`,
     `<p><strong>Contact number:</strong> ${html(data.contactNumber)}<br><strong>Email:</strong> ${html(data.email)}<br><strong>Wedding date:</strong> ${html(data.weddingDate)}</p>`,
-    `<p><strong>Lead-time band:</strong> ${html(data.leadTimeBand)}${data.notice ? `<br><strong>Notice shown:</strong> ${html(data.notice)}` : ""}</p>`,
+    studio
+      ? `<p><strong>Lead-time band:</strong> ${html(data.leadTimeBand)}${data.notice ? `<br><strong>Notice shown:</strong> ${html(data.notice)}` : ""}</p>`
+      : "",
     `<p><strong>Selected gowns:</strong></p><ul>${gownRows}</ul>`,
     `<p><strong>Message:</strong><br>${data.message ? html(data.message).replaceAll("\n", "<br>") : "None"}</p>`,
     `<p><strong>${studio ? "Short link" : "Your short link"}:</strong> <a href="${html(data.shortLinkUrl)}">${html(data.shortLinkUrl)}</a></p>`,

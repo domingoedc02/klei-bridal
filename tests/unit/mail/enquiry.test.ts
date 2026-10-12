@@ -57,6 +57,19 @@ describe("enquiry mail templates", () => {
     expect(studio.replyTo).toBe(data.email);
   });
 
+  it("bride copy omits internal triage fields; studio copy keeps them", () => {
+    const withNotice = { ...data, leadTimeBand: "rush" as const, notice: "Rush or in-stock" };
+    const bride = brideEnquiryEmail(withNotice);
+    const studio = studioEnquiryEmail(withNotice);
+    for (const body of [bride.html, bride.text]) {
+      expect(body).not.toContain("Lead-time band");
+      expect(body).not.toContain("Notice shown");
+      expect(body).not.toContain("Rush or in-stock");
+    }
+    expect(studio.text).toContain("Lead-time band: rush");
+    expect(studio.text).toContain("Notice shown: Rush or in-stock");
+  });
+
   it("states no gown selected", () => {
     const message = brideEnquiryEmail({ ...data, gowns: [] });
     expect(message.html).toContain("No gown selected.");

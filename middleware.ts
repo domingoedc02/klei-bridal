@@ -6,11 +6,25 @@ import {
   CSP_REPORT_ONLY,
   generateNonce,
 } from "./src/server/pipeline/headers";
+import {
+  CSRF_COOKIE,
+  csrfCookieValue,
+  csrfSetCookie,
+  mintCsrfToken,
+  validCsrfToken,
+} from "./src/server/pipeline/csrf";
 import { requestIdOf } from "./src/server/pipeline/request-id";
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // node:crypto HMAC for the signed CSRF cookie (KBS-17 security review).
+  runtime: "nodejs",
 };
+
+/** A page load: GET, not an API or media request. */
+function isDocumentGet(request: NextRequest): boolean {
+  return request.method === "GET" && !/^\/(?:api|media)\//.test(request.nextUrl.pathname);
+}
 
 /**
  * Request pipeline steps 1-3 ONLY (spec/architecture): request id,
@@ -37,8 +51,21 @@ export function middleware(request: NextRequest) {
   // Next.js reads the nonce from the request CSP header to nonce its own inline scripts.
   requestHeaders.set(CSP_REPORT_ONLY, contentSecurityPolicy(nonce));
 
+  // Mint the double-submit cookie on page loads, so a first-visit bride's
+  // first POST carries it (KBS-17; was only minted by a <400 API response).
+  let mintedCsrf: string | undefined;
+  if (isDocumentGet(request) && !validCsrfToken(csrfCookieValue(request))) {
+    mintedCsrf = mintCsrfToken();
+    const others = (request.headers.get("cookie") ?? "")
+      .split(";")
+      .map((part) => part.trim())
+      .filter((part) => part && !part.startsWith(`${CSRF_COOKIE}=`));
+    requestHeaders.set("cookie", [...others, `${CSRF_COOKIE}=${mintedCsrf}`].join("; "));
+  }
+
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("x-request-id", requestId);
+  if (mintedCsrf) response.headers.append("set-cookie", csrfSetCookie(mintedCsrf));
   applySecurityHeaders(response.headers, request.nextUrl.pathname, { nonce });
 
   return response;

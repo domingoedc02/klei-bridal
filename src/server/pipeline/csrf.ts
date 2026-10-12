@@ -19,7 +19,7 @@ export function mintCsrfToken(): string {
   return `${token}.${signature(token)}`;
 }
 
-function validToken(value: string | undefined): boolean {
+export function validCsrfToken(value: string | undefined): boolean {
   if (!value) return false;
   const separator = value.lastIndexOf(".");
   if (separator <= 0) return false;
@@ -70,7 +70,7 @@ export function requireCsrf(request: Request): void {
 
   const cookie = csrfCookieValue(request);
   const header = request.headers.get(CSRF_HEADER);
-  if (!validToken(cookie) || !header || header !== cookie) {
+  if (!validCsrfToken(cookie) || !header || header !== cookie) {
     throw new PipelineError(403, "FORBIDDEN", "CSRF validation failed.");
   }
 }
