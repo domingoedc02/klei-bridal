@@ -14,7 +14,7 @@ import { derivativePaths, variantsRoot } from "./variants";
 
 const ORIGINAL = /^(?:[a-f0-9]{2}\/){2}[a-f0-9]{64}\.(?:jpg|jpeg|png|webp|avif)$/i;
 
-type FileEntry = { absolute: string; relative: string };
+type FileEntry = { relative: string };
 
 async function filesUnder(root: string, directory = root): Promise<FileEntry[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -24,7 +24,7 @@ async function filesUnder(root: string, directory = root): Promise<FileEntry[]> 
     if (entry.isDirectory()) files.push(...(await filesUnder(root, absolute)));
     else if (entry.isFile()) {
       const path = relative(root, absolute).split(sep).join("/");
-      if (ORIGINAL.test(path)) files.push({ absolute, relative: path });
+      if (ORIGINAL.test(path)) files.push({ relative: path });
     }
   }
   return files;
@@ -45,34 +45,41 @@ export async function sweepOrphanedOriginals(
   const candidates = await filesUnder(originalsRoot());
   let removed = 0;
   for (const candidate of candidates) {
-    const shouldRemove = await database.transaction(async (tx) => {
-      await lockOriginalPath(tx, candidate.relative);
-      const references = await tx
-        .select({ id: gownImages.id })
-        .from(gownImages)
-        .where(eq(gownImages.originalPath, candidate.relative));
-      if (references.length > 0) return false;
-
-      // Derivatives first: a crash between the two leaves the original, so the next sweep retries.
-      // ponytail: paths are recomputed at today's widths/qualities; files from a retired
-      // width or quality stay behind. Add a manifest-diff sweep if those settings change.
-      const root = variantsRoot();
-      for (const path of [
-        ...derivativePaths(candidate.relative),
-        socialCropPath(candidate.relative),
-      ])
-        await rm(join(root, path), { force: true });
-      try {
-        await unlink(candidate.absolute);
-        removed++;
-        return true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-        throw error;
-      }
-    });
-
-    if (!shouldRemove) continue;
+    if (await removeOriginalIfUnreferenced(candidate.relative, database)) removed++;
   }
   return { scanned: candidates.length, removed };
+}
+
+/**
+ * Remove one original and its derivatives if no gown_images row names it.
+ * The reference check and the unlink share the path's advisory lock, so a
+ * concurrent upload of the same bytes either sees the file or keeps it.
+ * Image delete (KBS-21-4) calls this after its commit.
+ */
+export async function removeOriginalIfUnreferenced(
+  relativePath: string,
+  database: Database = defaultDb,
+): Promise<boolean> {
+  return database.transaction(async (tx) => {
+    await lockOriginalPath(tx, relativePath);
+    const references = await tx
+      .select({ id: gownImages.id })
+      .from(gownImages)
+      .where(eq(gownImages.originalPath, relativePath));
+    if (references.length > 0) return false;
+
+    // Derivatives first: a crash between the two leaves the original, so the next sweep retries.
+    // ponytail: paths are recomputed at today's widths/qualities; files from a retired
+    // width or quality stay behind. Add a manifest-diff sweep if those settings change.
+    const root = variantsRoot();
+    for (const path of [...derivativePaths(relativePath), socialCropPath(relativePath)])
+      await rm(join(root, path), { force: true });
+    try {
+      await unlink(join(originalsRoot(), relativePath));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  });
 }
