@@ -66,10 +66,11 @@ describe("app/api route handlers use withPipeline", () => {
 
 // KBS-11-3: `csrf: false` turns off the only CSRF check a route has. It is
 // allowed on the stateless CSP-report sink and nowhere else.
-const CSRF_OFF_ALLOWED = ["app/api/csp-report/route.ts"];
+// The mail webhook is authenticated by its Svix HMAC signature, not a cookie (KBS-33 Security).
+const CSRF_OFF_ALLOWED = ["app/api/csp-report/route.ts", "app/api/webhooks/mail/route.ts"];
 
 describe("csrf: false allowlist", () => {
-  it("only app/api/csp-report sets csrf: false", () => {
+  it("only the CSP sink and the signed mail webhook set csrf: false", () => {
     const offenders = routeFiles(join(ROOT, "app", "api"))
       .filter((file) => /\bcsrf\s*:\s*false\b/.test(readFileSync(file, "utf8")))
       .map((file) => relative(ROOT, file).split("\\").join("/"));
