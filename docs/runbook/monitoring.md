@@ -42,7 +42,68 @@ Who executes: the client holds sole Dokploy/Hostinger access (`decision/client-o
 
 ## 4. Host monitors
 
-Disk headroom, uptime with TLS expiry, Docker build-cache prune, encode-queue depth: see `KBS-33-3`. This section is to be filled in there.
+Client executes Dokploy and external-monitor setup. Team has no VPS credentials (`decision/client-ops-posture`), so no provider-specific cron or dashboard is committed. Record every monitor's destination as `ALERT_EMAIL`, and record one successful test event before marking KBS-34 complete.
+
+### Disk headroom: 70% warning, 80% action
+
+1. In Dokploy server monitoring, add filesystem usage for the VPS root filesystem and the `kbs-media` mount. Alert at **70% used** (warning) and **80% used** (critical/action). If Dokploy cannot alert on filesystem usage, add this root cron instead:
+
+```cron
+# Asia/Manila off-peak is not required for a read-only check; run hourly.
+0 * * * * /usr/local/sbin/kbs-disk-check
+```
+
+`/usr/local/sbin/kbs-disk-check` must run `df -P / /data/media`, parse the percentage column, and send a warning/critical message through the client's chosen monitor to `ALERT_EMAIL`. Do not put mail credentials in the script or repository. Include mount, percentage, available bytes and the runbook URL. Alert only on threshold crossing or while an incident is open; do not mail every hourly sample.
+
+**Pass:** a temporary test threshold or monitor test sends a warning to `ALERT_EMAIL`, then a critical test at 80%. **Fail:** no message in five minutes; check monitor ownership and destination. Restore real thresholds after test.
+
+### External uptime and TLS
+
+Create one external monitor in UptimeRobot, Better Stack or equivalent:
+
+| Check | Value |
+|---|---|
+| URL 1 | `https://<production-domain>/` |
+| URL 2 | `https://<production-domain>/gowns/<known-published-slug>` |
+| Interval | **1–5 minutes**; use 5 minutes on free tier |
+| Expected status | `200` |
+| TLS expiry | **Enabled**; alert before expiry (30 days recommended) |
+| Notifications | `ALERT_EMAIL`; SMS only if client already owns a provider |
+
+**Pass:** both checks return 200, TLS check shows a valid certificate, and a test pause/failure reaches `ALERT_EMAIL`. **Fail:** any 4xx/5xx, timeout or certificate warning; inspect Dokploy deployment health and Traefik logs. Do not use an internal-only health check as the sole uptime monitor.
+
+### Docker builder cache prune
+
+Add one host cron under the client's Dokploy/Hostinger maintenance schedule. Run it weekly at 02:00 `Asia/Manila`, inside the 11pm–5am off-peak window and outside any deploy. Command:
+
+```cron
+# Saturday 02:00 Asia/Manila; client must confirm host cron timezone.
+0 2 * * 6 docker builder prune --filter until=168h --force >> /var/log/kbs-docker-prune.log 2>&1
+```
+
+If host timezone is not `Asia/Manila`, configure the schedule in Dokploy's timezone selector or convert 02:00 before saving. **Never use `docker system prune -a`** and never add `--volumes`: named Postgres/media volumes must survive. Keep the log for troubleshooting. Review `df -h` before and after the first run.
+
+**Pass:** command exits 0, removes only builder cache older than 168h, and `df -h` shows reclaimed/unchanged space. **Fail:** permission error or volume warning; run it as the Docker-admin account, then verify `docker volume ls` and stop. Do not widen the prune command.
+
+### Encode queue depth and oldest pending age
+
+Queue state lives in Postgres table `image_jobs` (not Valkey). Add a Dokploy/DB monitor or a read-only hourly check with this query:
+
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE status IN ('pending', 'processing')) AS active_jobs,
+  COUNT(*) FILTER (WHERE status = 'pending') AS pending_jobs,
+  COALESCE(EXTRACT(EPOCH FROM (now() - MIN(created_at) FILTER (WHERE status = 'pending')))::int, 0) AS oldest_pending_age_seconds
+FROM image_jobs;
+```
+
+Alert thresholds: warning when `pending_jobs > 0` and `oldest_pending_age_seconds > 900` (15 minutes); critical when it exceeds **3600 seconds** (1 hour), or when active jobs grow for three consecutive samples. This matches worker stale recovery (`15 min`) and bounded concurrency (`IMAGE_WORKER_CONCURRENCY=2`). Report counts and age only; never include image paths or bride data in an alert.
+
+**Pass:** insert/identify a disposable pending test row in a rehearsal database, observe warning then critical thresholds, and remove it; production test must use the monitor's dry-run feature, not a real `image_jobs` row. **Fail:** no alert or a query that scans/locks rows; use the aggregate query above and a read-only DB role.
+
+### One test record
+
+For KBS-34 go-live report back: disk warning/critical test result, uptime/TLS test result, prune result and date, queue monitor test result, and the exact `ALERT_EMAIL` destination used. A monitor without a recorded test is configuration, not monitoring.
 
 ## 5. Mail delivery alerts
 
