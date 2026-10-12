@@ -51,6 +51,17 @@ agreed and ready to run the moment `KBS-31` lands, not written at the last minut
       ⚠ **BLOCKED** — `ALERT_EMAIL` is not yet known, and **it must not equal
       `STUDIO_ENQUIRY_EMAIL`** (a studio-address bounce alert delivered to the bouncing
       address is circular). Owner: project-manager, with the client.
+- [ ] **Client-run:** each `docs/runbook/monitoring.md` §4 host job has a **dated test record**
+      (who ran it, when, the result). All four need the production host:
+
+      | Job | Test | Record |
+      |---|---|---|
+      | Disk check (`/` + `kbs-media` mountpoint) | warning, critical, and check-failure paths each email `ALERT_EMAIL` | who · date · result |
+      | External uptime + TLS expiry | monitor fires on a forced failure and clears | who · date · result |
+      | Builder cache prune (`30 5 * * 6`) | first scheduled run succeeds; volumes untouched | who · date · result |
+      | `image_jobs` queue check via the read-only role | role can `SELECT` from `image_jobs` and nothing else (an `UPDATE` is refused); password is not in the repo or the crontab | who · date · result |
+
+      No record means it is not done. Owner: client; devops collects the records.
 - [ ] `IMAGE_ORIGINALS_PATH` ≠ `IMAGE_CACHE_PATH`: two **separate, non-nested** directories
       on the `kbs-media` volume (`/data/media/originals` and `/data/media/derivatives`).
       `/media` serves `<sha256>.jpg` from the cache root and originals use the same naming, so
