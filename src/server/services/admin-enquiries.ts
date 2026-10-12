@@ -7,11 +7,11 @@ import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
 import type { LeadTimeBand } from "@/shared/leadtime";
+import type { EnquiryEraseReason, EnquiryStatus } from "@/shared/schemas/enquiryAdmin";
 
-import { isErased } from "./enquiry-erasure";
+import { anonymiseEnquiry, isErased } from "./enquiry-erasure";
 
-export const ENQUIRY_STATUSES = ["new", "read", "archived"] as const;
-export type EnquiryStatus = (typeof ENQUIRY_STATUSES)[number];
+export { ENQUIRY_STATUSES } from "@/shared/schemas/enquiryAdmin";
 
 export interface EnquiryListQuery {
   page: number;
@@ -118,6 +118,64 @@ export async function listEnquiries(input: EnquiryListQuery, db: Database = defa
   };
 }
 
+/** The detail shape every inbox read and write returns. Writes no audit row itself. */
+async function readDetail(db: Database, id: string) {
+  const { handled, on } = withHandled(db);
+  const [row] = await db
+    .select({
+      enquiry: enquiries,
+      is_erased: isErased,
+      handledId: staffUsers.id,
+      handledName: staffUsers.name,
+      handledAt: handled.at,
+    })
+    .from(enquiries)
+    .leftJoinLateral(handled, on)
+    .leftJoin(staffUsers, eq(staffUsers.id, handled.actorId))
+    .where(eq(enquiries.id, id));
+  if (!row) throw new PipelineError(404, "NOT_FOUND", "Enquiry not found.");
+
+  const gowns = await db
+    .select({
+      gown_id: enquiryGowns.gownId,
+      name: enquiryGowns.gownNameSnapshot,
+      price_minor: enquiryGowns.priceMinorSnapshot,
+      price_status: enquiryGowns.priceStatusSnapshot,
+      currency: enquiryGowns.currencySnapshot,
+    })
+    .from(enquiryGowns)
+    .where(eq(enquiryGowns.enquiryId, id))
+    .orderBy(asc(enquiryGowns.gownNameSnapshot));
+
+  const e = row.enquiry;
+  return {
+    id: e.id,
+    reference: e.reference,
+    first_name: e.firstName,
+    last_name: e.lastName,
+    contact_number: e.contactNumber,
+    email: e.email,
+    wedding_date: e.weddingDate,
+    message: e.message,
+    source: e.source,
+    utm_source: e.utmSource,
+    utm_medium: e.utmMedium,
+    utm_campaign: e.utmCampaign,
+    referrer_host: e.referrerHost,
+    chat_channel: e.chatChannelChosen,
+    lead_time_band: e.leadTimeBandShown,
+    lead_time_notice: e.leadTimeNoticeShown,
+    status: e.status,
+    // A bounced studio email is visible here, not silent (KBS-23 failure branches).
+    studio_email_status: e.studioEmailStatus,
+    bride_email_status: e.brideEmailStatus,
+    created_at: e.createdAt.toISOString(),
+    is_erased: row.is_erased,
+    gowns,
+    ...handledBy(row.handledId, row.handledName, row.handledAt),
+  };
+}
+
 /**
  * GET /admin/enquiries/:id (KBS-23-1): every field plus the gowns as she saw
  * them. The enquiry.view audit row is written in the same transaction as the
@@ -131,21 +189,7 @@ export async function getEnquiryDetail(
   db: Database = defaultDb,
 ) {
   return db.transaction(async (tx) => {
-    const { handled, on } = withHandled(tx as unknown as Database);
-    const [row] = await tx
-      .select({
-        enquiry: enquiries,
-        is_erased: isErased,
-        handledId: staffUsers.id,
-        handledName: staffUsers.name,
-        handledAt: handled.at,
-      })
-      .from(enquiries)
-      .leftJoinLateral(handled, on)
-      .leftJoin(staffUsers, eq(staffUsers.id, handled.actorId))
-      .where(eq(enquiries.id, id));
-    if (!row) throw new PipelineError(404, "NOT_FOUND", "Enquiry not found.");
-
+    const detail = await readDetail(tx as unknown as Database, id);
     await tx.insert(auditLog).values({
       occurredAt: new Date(),
       actorUserId: actor.staff.id,
@@ -154,45 +198,57 @@ export async function getEnquiryDetail(
       entityId: id,
       ip: inetOrNull(ip),
     });
+    return detail;
+  });
+}
 
-    const gowns = await tx
-      .select({
-        gown_id: enquiryGowns.gownId,
-        name: enquiryGowns.gownNameSnapshot,
-        price_minor: enquiryGowns.priceMinorSnapshot,
-        price_status: enquiryGowns.priceStatusSnapshot,
-        currency: enquiryGowns.currencySnapshot,
-      })
-      .from(enquiryGowns)
-      .where(eq(enquiryGowns.enquiryId, id))
-      .orderBy(asc(enquiryGowns.gownNameSnapshot));
+/**
+ * PATCH /admin/enquiries/:id (KBS-23-2): 'read' marks handled, 'new' undoes a
+ * mis-tap. The audit row is in the same transaction and not best-effort.
+ * Same status is a no-op with no audit row; an erased enquiry is frozen (409).
+ */
+export async function setEnquiryStatus(
+  id: string,
+  status: EnquiryStatus,
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+) {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ status: enquiries.status, erased: isErased })
+      .from(enquiries)
+      .where(eq(enquiries.id, id))
+      .for("update");
+    if (!row) throw new PipelineError(404, "NOT_FOUND", "Enquiry not found.");
+    if (row.erased) throw new PipelineError(409, "CONFLICT", "This enquiry is erased.");
+    if (row.status !== status) {
+      await tx.update(enquiries).set({ status }).where(eq(enquiries.id, id));
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: "enquiry.status_change",
+        entityType: "enquiry",
+        entityId: id,
+        detail: { from: row.status, to: status },
+        ip: inetOrNull(ip),
+      });
+    }
+    return readDetail(tx as unknown as Database, id);
+  });
+}
 
-    const e = row.enquiry;
-    return {
-      id: e.id,
-      reference: e.reference,
-      first_name: e.firstName,
-      last_name: e.lastName,
-      contact_number: e.contactNumber,
-      email: e.email,
-      wedding_date: e.weddingDate,
-      message: e.message,
-      source: e.source,
-      utm_source: e.utmSource,
-      utm_medium: e.utmMedium,
-      utm_campaign: e.utmCampaign,
-      referrer_host: e.referrerHost,
-      chat_channel: e.chatChannelChosen,
-      lead_time_band: e.leadTimeBandShown,
-      lead_time_notice: e.leadTimeNoticeShown,
-      status: e.status,
-      // A bounced studio email is visible here, not silent (KBS-23 failure branches).
-      studio_email_status: e.studioEmailStatus,
-      bride_email_status: e.brideEmailStatus,
-      created_at: e.createdAt.toISOString(),
-      is_erased: row.is_erased,
-      gowns,
-      ...handledBy(row.handledId, row.handledName, row.handledAt),
-    };
+/** POST /admin/enquiries/:id/erase (KBS-23-2): staff-triggered erase; 409 on a repeat with no audit row. */
+export async function eraseEnquiry(
+  id: string,
+  reason: EnquiryEraseReason,
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+) {
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Database;
+    await anonymiseEnquiry(t, id, { actorUserId: actor.staff.id, trigger: "manual", reason, ip });
+    return readDetail(t, id);
   });
 }

@@ -2,7 +2,8 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { validate, withPipeline } from "@/server/pipeline";
-import { ENQUIRY_STATUSES, listEnquiries } from "@/server/services/admin-enquiries";
+import { listEnquiries } from "@/server/services/admin-enquiries";
+import { ENQUIRY_STATUSES } from "@/shared/schemas/enquiryAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +25,10 @@ async function handler(request: NextRequest, context: { query: z.infer<typeof Qu
     status: params.getAll("status"),
     band: params.getAll("band"),
   });
-  return Response.json(await listEnquiries({ ...context.query, ...repeated }));
+  // Names and wedding dates: never cached (security-eng, KBS-23-1 review).
+  return Response.json(await listEnquiries({ ...context.query, ...repeated }), {
+    headers: { "cache-control": "no-store" },
+  });
 }
 
 export const GET = withPipeline(handler, { auth: "staff", rateLimit: null, query: Query });
