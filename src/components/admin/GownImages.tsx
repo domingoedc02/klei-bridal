@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { readApiError, readCsrfToken } from "./CategoryForm";
 
 // KBS-21-5. Client side of spec/api/admin-images. The server stays the
@@ -70,8 +70,24 @@ export default function GownImages({
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  const [mutationError, setMutationError] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [altDraft, setAltDraft] = useState<Record<string, string>>({});
   const latest = useRef<GownImage[] | null>(null);
+  const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const itemRefCallbacks = useRef<Record<string, (element: HTMLLIElement | null) => void>>({});
+  const focusTarget = useRef<string | null>(null);
   const seq = useRef(0);
+
+  function itemRef(id: string) {
+    return (itemRefCallbacks.current[id] ??= (element) => {
+      itemRefs.current[id] = element;
+      if (element && focusTarget.current === id) {
+        element.focus();
+        focusTarget.current = null;
+      }
+    });
+  }
 
   const load = useCallback(async () => {
     const response = await fetch(base);
@@ -84,12 +100,21 @@ export default function GownImages({
     if (changed)
       setAnnounce(`Photo ${changed.sort_order + 1} ${STATUS_LABEL[changed.status].toLowerCase()}.`);
     latest.current = next;
-    setImages(next);
+    setImages([...next]);
   }, [base]);
 
   useEffect(() => {
     load().catch(() => setNotice("Could not load photos. Try again."));
   }, [load]);
+
+  useLayoutEffect(() => {
+    const targetId = focusTarget.current;
+    if (!targetId) return;
+    const target = itemRefs.current[targetId];
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    focusTarget.current = null;
+  }, [images]);
 
   const pending = images?.some((i) => i.status === "pending") ?? false;
   useEffect(() => {
@@ -139,14 +164,74 @@ export default function GownImages({
     for (const upload of batch) if (!upload.error) await send(upload);
   }
 
+  async function mutate(
+    imageId: string,
+    url: string,
+    method: string,
+    body?: unknown,
+    focusId = imageId,
+  ) {
+    setBusy((state) => ({ ...state, [imageId]: true }));
+    setMutationError((state) => ({ ...state, [imageId]: "" }));
+    try {
+      const csrf = readCsrfToken();
+      const response = await fetch(url, {
+        method,
+        headers: {
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...(csrf ? { "x-csrf-token": csrf } : {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const error = await readApiError(response);
+        setMutationError((state) => ({ ...state, [imageId]: error.message }));
+        return;
+      }
+      focusTarget.current = focusId;
+      await load();
+    } catch {
+      setMutationError((state) => ({
+        ...state,
+        [imageId]: "Could not save this photo. Try again.",
+      }));
+    } finally {
+      setBusy((state) => ({ ...state, [imageId]: false }));
+    }
+  }
+
   async function retry(image: GownImage) {
-    const csrf = readCsrfToken();
-    const response = await fetch(`${base}/${encodeURIComponent(image.id)}/retry`, {
-      method: "POST",
-      headers: csrf ? { "x-csrf-token": csrf } : {},
+    await mutate(image.id, `${base}/${encodeURIComponent(image.id)}/retry`, "POST");
+  }
+
+  async function move(image: GownImage, direction: -1 | 1) {
+    if (!images) return;
+    const at = images.findIndex((item) => item.id === image.id);
+    const other = at + direction;
+    if (other < 0 || other >= images.length) return;
+    const order = images.map((item) => item.id);
+    const currentId = order[at];
+    order[at] = order[other]!;
+    order[other] = currentId!;
+    await mutate(image.id, `${base}/reorder`, "PATCH", { order });
+  }
+
+  async function setHero(image: GownImage) {
+    await mutate(image.id, `${base}/${encodeURIComponent(image.id)}/hero`, "POST");
+  }
+
+  async function saveAlt(image: GownImage) {
+    await mutate(image.id, `${base}/${encodeURIComponent(image.id)}`, "PATCH", {
+      alt: altDraft[image.id] ?? image.alt_text ?? "",
     });
-    if (!response.ok) setNotice((await readApiError(response)).message);
-    await load().catch(() => undefined);
+  }
+
+  async function remove(image: GownImage) {
+    if (!window.confirm("Delete this photo? This cannot be undone.")) return;
+    const at = images?.findIndex((item) => item.id === image.id) ?? -1;
+    const focusId = images?.[at + 1]?.id ?? images?.[at - 1]?.id;
+    if (!focusId) return;
+    await mutate(image.id, `${base}/${encodeURIComponent(image.id)}`, "DELETE", undefined, focusId);
   }
 
   const full = (images?.length ?? 0) + uploads.length >= maxImages;
@@ -211,22 +296,74 @@ export default function GownImages({
       {images?.length === 0 && !uploads.length ? <p>No photos yet.</p> : null}
       {images?.length ? (
         <ol className="image-list" aria-label="Photos">
-          {images.map((image) => (
-            <li key={image.id}>
-              <span className="image-name">
-                Photo {image.sort_order + 1}
-                {image.is_hero ? " · Main photo" : ""}
-              </span>
-              <span className={`status status-${image.status}`}>{STATUS_LABEL[image.status]}</span>
-              {image.status === "failed" ? (
-                <span className="actions">
-                  <button type="button" onClick={() => void retry(image)}>
-                    Retry photo {image.sort_order + 1}
-                  </button>
+          {images.map((image, index) => {
+            const isBusy = busy[image.id] ?? false;
+            const alt = altDraft[image.id] ?? image.alt_text ?? "";
+            return (
+              <li
+                key={image.id}
+                ref={itemRef(image.id)}
+                tabIndex={-1}
+                aria-label={`Photo ${image.sort_order + 1}`}
+              >
+                <span className="image-name">
+                  Photo {image.sort_order + 1}
+                  {image.is_hero ? " · Main photo" : ""}
                 </span>
-              ) : null}
-            </li>
-          ))}
+                <span className={`status status-${image.status}`}>
+                  {image.is_hero ? "★ Main photo · " : ""}
+                  {STATUS_LABEL[image.status]}
+                </span>
+                <label className="alt-field">
+                  Alt text
+                  <input
+                    value={alt}
+                    maxLength={250}
+                    onChange={(event) =>
+                      setAltDraft((state) => ({ ...state, [image.id]: event.target.value }))
+                    }
+                  />
+                </label>
+                <span className="actions">
+                  <button
+                    type="button"
+                    disabled={isBusy || index === 0}
+                    onClick={() => void move(image, -1)}
+                  >
+                    Move earlier
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isBusy || index === images.length - 1}
+                    onClick={() => void move(image, 1)}
+                  >
+                    Move later
+                  </button>
+                  {image.status === "ready" && !image.is_hero ? (
+                    <button type="button" disabled={isBusy} onClick={() => void setHero(image)}>
+                      Set as hero
+                    </button>
+                  ) : null}
+                  <button type="button" disabled={isBusy} onClick={() => void saveAlt(image)}>
+                    Save alt text
+                  </button>
+                  <button type="button" disabled={isBusy} onClick={() => void remove(image)}>
+                    Delete photo {image.sort_order + 1}
+                  </button>
+                  {image.status === "failed" ? (
+                    <button type="button" disabled={isBusy} onClick={() => void retry(image)}>
+                      Retry photo {image.sort_order + 1}
+                    </button>
+                  ) : null}
+                </span>
+                {mutationError[image.id] ? (
+                  <span className="form-error" role="alert">
+                    {mutationError[image.id]}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       ) : null}
     </section>
@@ -244,6 +381,8 @@ const css = `
 .image-name { flex:1 1 12rem; overflow-wrap:anywhere; }
 .image-list progress { flex:1 1 10rem; height:.5rem; accent-color:var(--gold); }
 .status-failed { color:var(--error); } .status-pending { color:var(--muted); }
+.alt-field { display:grid; gap:.25rem; flex:1 1 14rem; }
+.alt-field input { width:100%; min-height:44px; }
 .actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 @media (max-width:30rem) { .actions, .actions button, .upload-label { width:100%; } }

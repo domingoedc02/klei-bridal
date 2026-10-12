@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-// KBS-21-5. Images API mocked at the network layer (spec/api/admin-images
-// shapes); the server routes themselves are covered by KBS-21-1/-2 tests.
+// KBS-21-5/-6. Images API mocked at network layer (spec/api/admin-images
+// shapes); server routes covered by KBS-21-1/-4 tests.
 
 const gownId = "0192a000-0000-7000-8000-000000000021";
 const base = `**/api/admin/gowns/${gownId}`;
