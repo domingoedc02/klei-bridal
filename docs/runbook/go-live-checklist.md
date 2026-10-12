@@ -74,13 +74,20 @@ agreed and ready to run the moment `KBS-31` lands, not written at the last minut
          SELECT table_name, privilege_type FROM information_schema.role_table_grants
            WHERE grantee = '<role>';
          -- exactly one row: image_jobs · SELECT
+         SELECT table_name, column_name FROM information_schema.column_privileges
+           WHERE grantee = '<role>' AND table_name <> 'image_jobs';
+         -- zero rows: no column-level grants elsewhere
          ```
       2. **As `<role>`:** `SELECT count(*) FROM enquiries;` is refused with `permission denied`.
-         `UPDATE image_jobs SET status = status WHERE false;` is also refused; it changes no
-         rows, so it is safe on production.
+         `BEGIN READ WRITE; UPDATE image_jobs SET status = status WHERE false; ROLLBACK;` is
+         refused with `permission denied for table image_jobs`; it changes no rows, so it is safe
+         on production. (`READ WRITE` matters once step 4 is applied: without it the refusal is
+         `read-only transaction`, which does not prove the missing privilege.)
       3. **Password:** in `~/.pgpass` (mode `0600`) or the monitor's secret store. Never in the
          repo, the crontab, the cron command line (`ps` shows it) or a `postgresql://user:pw@` URL.
-      4. Optional: `ALTER ROLE <role> SET default_transaction_read_only = on, statement_timeout = '5s';`
+      4. Optional (`ALTER ROLE … SET` takes one parameter per statement):
+         `ALTER ROLE <role> SET default_transaction_read_only = on;`
+         `ALTER ROLE <role> SET statement_timeout = '5s';`
 
       **Record the exact `ALERT_EMAIL` address every monitor sends to:** `<ALERT_EMAIL — client to supply>`.
       It must match the Dokploy value and must not be a `STUDIO_ENQUIRY_EMAIL` inbox (PR #40).
