@@ -23,4 +23,8 @@ async function handler(request: NextRequest) {
   return response;
 }
 
-export const POST = withPipeline(handler, { auth: "public", rateLimit: null });
+export const POST = withPipeline(handler, {
+  auth: "staff",
+  rateLimit: null,
+  allowPendingPasswordChange: true,
+});

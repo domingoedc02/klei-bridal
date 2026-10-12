@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, gt, isNull, lte, ne } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, ne, or } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import type { Database } from "@/server/db/client";
@@ -107,6 +107,7 @@ export interface ValidSession {
   sessionId: string;
   expiresAt: Date;
   staff: { id: string; name: string; email: string };
+  passwordChangeRequired?: boolean;
 }
 
 /**
@@ -141,6 +142,7 @@ export async function validateSession(
       staffId: staffUsers.id,
       name: staffUsers.name,
       email: staffUsers.email,
+      tempPasswordExpiresAt: staffUsers.tempPasswordExpiresAt,
     })
     .from(sessions)
     .innerJoin(staffUsers, eq(staffUsers.id, sessions.staffUserId))
@@ -152,6 +154,7 @@ export async function validateSession(
         gt(sessions.createdAt, new Date(now.getTime() - SESSION_ABSOLUTE_TTL_MS)),
         gt(sessions.lastSeenAt, new Date(now.getTime() - SESSION_IDLE_TIMEOUT_MS)),
         eq(staffUsers.isActive, true),
+        or(isNull(staffUsers.tempPasswordExpiresAt), gt(staffUsers.tempPasswordExpiresAt, now)),
       ),
     )
     .limit(1);
@@ -166,6 +169,7 @@ export async function validateSession(
     sessionId: row.sessionId,
     expiresAt: row.expiresAt,
     staff: { id: row.staffId, name: row.name, email: row.email },
+    passwordChangeRequired: Boolean(row.tempPasswordExpiresAt && row.tempPasswordExpiresAt > now),
   };
 }
 

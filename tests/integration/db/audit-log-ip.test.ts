@@ -37,7 +37,8 @@ async function signInVia(email: string, ipHeaders: Record<string, string>) {
       body: JSON.stringify({ email, password: PASSWORD }),
     }),
   );
-  expect(res.status).toBe(204);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ password_change_required: false });
 }
 
 async function auditIp(staffId: string) {

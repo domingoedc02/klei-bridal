@@ -58,6 +58,10 @@ async function handler(request: NextRequest) {
         throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
           fields: { current_password: "Current password is incorrect." },
         });
+      case "same_password":
+        throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
+          fields: { new_password: "New password must differ from current password." },
+        });
       case "weak_password":
         throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
           fields: { new_password: `Use at least ${MIN_PASSWORD_LENGTH} characters.` },
@@ -91,4 +95,8 @@ async function handler(request: NextRequest) {
   return response;
 }
 
-export const POST = withPipeline(handler, { auth: "public", rateLimit: budgets.adminWrite });
+export const POST = withPipeline(handler, {
+  auth: "staff",
+  rateLimit: budgets.adminWrite,
+  allowPendingPasswordChange: true,
+});
