@@ -6,6 +6,7 @@ type CategoryType = "silhouettes" | "materials" | "collections";
 
 type ApiError = {
   message: string;
+  request_id?: string;
   suggestion?: { name: string };
   fields?: Record<string, string>;
 };
@@ -40,6 +41,7 @@ export async function readApiError(response: Response): Promise<ApiError> {
           : typeof record.message === "string"
             ? record.message
             : `Request failed (${response.status})`,
+      request_id: typeof errorRecord?.request_id === "string" ? errorRecord.request_id : undefined,
       suggestion:
         typeof suggestionRecord?.name === "string" ? { name: suggestionRecord.name } : undefined,
       fields:

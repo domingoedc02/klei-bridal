@@ -117,3 +117,136 @@ test("erased detail: badge, no personal data, no overflow", async ({ page }) => 
   await expect(page.getByRole("link", { name: "← All enquiries" })).toBeFocused();
   await noOverflow(page);
 });
+
+// KBS-23-4: handled toggle and erase confirmation against mocked routes.
+const liveDetail = {
+  ...erasedDetail,
+  first_name: "Maria",
+  last_name: "Santos",
+  contact_number: "+639171234567",
+  email: "maria@bride.test",
+  message: "Looking for lace",
+  is_erased: false,
+  status: "new",
+};
+const detailUrl = `**/api/admin/enquiries/${id}`;
+const eraseUrl = `**/api/admin/enquiries/${id}/erase`;
+
+test("handled toggle round trip shows who handled it", async ({ page }) => {
+  const patches: unknown[] = [];
+  await page.route(detailUrl, (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: liveDetail });
+    const body = route.request().postDataJSON() as { status: string };
+    patches.push(body);
+    return route.fulfill({
+      json:
+        body.status === "read"
+          ? { ...liveDetail, status: "read", handled_by: { id: "s1", name: "Ana" } }
+          : liveDetail,
+    });
+  });
+  await page.goto(`/admin/enquiries/${id}`);
+  await page.getByRole("button", { name: "Mark handled" }).click();
+  await expect(page.getByText("Handled by Ana")).toBeVisible();
+  await page.getByRole("button", { name: "Mark as needing reply" }).click();
+  await expect(page.getByText("Needs reply")).toBeVisible();
+  expect(patches).toEqual([{ status: "read" }, { status: "new" }]);
+});
+
+test("erase: dialog names the fields, traps focus, Escape cancels, reason required, then erased", async ({
+  page,
+}) => {
+  let posted: unknown = null;
+  await page.route(detailUrl, (route) => route.fulfill({ json: liveDetail }));
+  await page.route(eraseUrl, (route) => {
+    posted = route.request().postDataJSON();
+    return route.fulfill({ json: erasedDetail });
+  });
+  await page.goto(`/admin/enquiries/${id}`);
+
+  const open = page.getByRole("button", { name: "Erase personal data" });
+  await open.click();
+  const dialog = page.getByRole("dialog", { name: "Erase personal data?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("phone number and email");
+  await expect(dialog).toContainText("This cannot be undone.");
+  await noOverflow(page);
+  // Dialog controls are keyboard reachable; native modal keeps focus in dialog.
+  await expect(dialog.getByLabel("Reason")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Erase permanently" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(posted).toBeNull();
+
+  await open.click();
+  const submit = dialog.getByRole("button", { name: "Erase permanently" });
+  await expect(submit).toBeDisabled();
+  await dialog.getByLabel("Reason").selectOption("data_subject_request");
+  await submit.click();
+  await expect(dialog).toBeHidden();
+  expect(posted).toEqual({ confirm: true, reason: "data_subject_request" });
+  await expect(page.getByText("Personal data erased")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Erase|Mark/ })).toHaveCount(0);
+  expect(await page.locator("main").innerText()).not.toContain("Maria");
+});
+
+test("erased enquiry offers no actions", async ({ page }) => {
+  await page.route(detailUrl, (route) => route.fulfill({ json: erasedDetail }));
+  await page.goto(`/admin/enquiries/${id}`);
+  await expect(page.getByText("Personal data erased")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Erase|Mark/ })).toHaveCount(0);
+});
+
+test("409 (erased elsewhere) reloads the erased state and says why", async ({ page }) => {
+  let erased = false;
+  await page.route(detailUrl, (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: erased ? erasedDetail : liveDetail });
+    erased = true;
+    return route.fulfill({
+      status: 409,
+      json: { error: { code: "CONFLICT", message: "This enquiry is erased.", request_id: "r9" } },
+    });
+  });
+  await page.goto(`/admin/enquiries/${id}`);
+  await page.getByRole("button", { name: "Mark handled" }).click();
+  await expect(page.getByText("Personal data erased")).toBeVisible();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "This enquiry is erased." }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /Erase|Mark/ })).toHaveCount(0);
+});
+
+test("422 field error shows inline in the dialog; 500 shows the request id", async ({ page }) => {
+  let calls = 0;
+  await page.route(detailUrl, (route) => route.fulfill({ json: liveDetail }));
+  await page.route(eraseUrl, (route) =>
+    ++calls === 1
+      ? route.fulfill({
+          status: 422,
+          json: {
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Check the highlighted fields.",
+              request_id: "r1",
+              fields: { reason: "Choose a listed reason." },
+            },
+          },
+        })
+      : route.fulfill({
+          status: 500,
+          json: {
+            error: { code: "INTERNAL", message: "Something went wrong.", request_id: "req-500" },
+          },
+        }),
+  );
+  await page.goto(`/admin/enquiries/${id}`);
+  await page.getByRole("button", { name: "Erase personal data" }).click();
+  const dialog = page.getByRole("dialog", { name: "Erase personal data?" });
+  await dialog.getByLabel("Reason").selectOption("retention_policy");
+  await dialog.getByRole("button", { name: "Erase permanently" }).click();
+  await expect(dialog.getByText("Choose a listed reason.")).toBeVisible();
+  await expect(dialog.getByLabel("Reason")).toHaveAttribute("aria-invalid", "true");
+  await dialog.getByRole("button", { name: "Erase permanently" }).click();
+  await expect(dialog.getByText("Something went wrong. (reference req-500)")).toBeVisible();
+});
