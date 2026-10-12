@@ -4,6 +4,8 @@ import postgres from "postgres";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { POST } from "../../../app/api/enquiries/route";
+import { middleware } from "../../../middleware";
+import { env } from "@/config/env";
 import { db } from "@/server/db/client";
 import { submitEnquiry, type EnquiryInput } from "@/server/services/enquiries";
 import { todayIn } from "@/shared/dates";
@@ -113,6 +115,28 @@ describe("POST /api/enquiries (KBS-17-1)", () => {
     expect(row!.status).toBe("new");
     expect(row!.contact_number).toBe("+63 917 123 4567");
     expect((await waitForMailStatuses(body.email)).studio_email_status).toBe("sent");
+  });
+
+  it("first visit: GET /enquire mints kbs_csrf, then the POST that echoes it gets 201 (no injected cookie)", async () => {
+    const page = middleware(new NextRequest("http://localhost:3000/enquire"));
+    const setCookie = page.headers.get("set-cookie") ?? "";
+    const token = /kbs_csrf=([^;]+)/.exec(setCookie)?.[1];
+    expect(token).toBeTruthy();
+    // What EnquiryForm does: read document.cookie, send it back as x-csrf-token.
+    const res = await POST(
+      new NextRequest("http://localhost:3000/api/enquiries", {
+        method: "POST",
+        headers: {
+          origin: new URL(env.SITE_URL).origin,
+          cookie: `kbs_csrf=${token}`,
+          "x-csrf-token": token!,
+          "content-type": "application/json",
+          "x-real-ip": ip(),
+        },
+        body: JSON.stringify(input()),
+      }),
+    );
+    expect(res.status).toBe(201);
   });
 
   it("CSRF is enforced", async () => {
