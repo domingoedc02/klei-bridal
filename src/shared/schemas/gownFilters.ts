@@ -7,7 +7,10 @@ const optionalText = z.preprocess(
 );
 const optionalWholePeso = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-  z.coerce.number().int().min(0).max(9_999_999).optional(),
+  z.union([
+    z.number().int().min(0).max(9_999_999),
+    z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0).max(9_999_999)),
+  ]).optional(),
 );
 const repeatableSlug = z
   .union([slug, z.array(slug).max(20)])
