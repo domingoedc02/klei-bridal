@@ -1,6 +1,20 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, exists, gte, ilike, inArray, lte, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  exists,
+  gte,
+  ilike,
+  inArray,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import { db as defaultDb, type Database } from "@/server/db/client";
 import {
@@ -37,6 +51,7 @@ export type CatalogueCard = {
 };
 
 export type CataloguePage = {
+  canonicalized: boolean;
   cards: CatalogueCard[];
   total: number;
   page: number;
@@ -108,8 +123,16 @@ export async function listCatalogue(
       or(ilike(gowns.name, `%${query.q}%`), ilike(gowns.description, `%${query.q}%`))!,
     );
   if (query.available === "1") conditions.push(eq(gowns.isInStock, true));
-  if (query.price_min !== undefined) conditions.push(gte(gowns.priceMinor, query.price_min * 100));
-  if (query.price_max !== undefined) conditions.push(lte(gowns.priceMinor, query.price_max * 100));
+  if (query.price_min !== undefined) {
+    conditions.push(
+      and(eq(gowns.priceStatus, "priced"), gte(gowns.priceMinor, query.price_min * 100))!,
+    );
+  }
+  if (query.price_max !== undefined) {
+    conditions.push(
+      and(eq(gowns.priceStatus, "priced"), lte(gowns.priceMinor, query.price_max * 100))!,
+    );
+  }
   if (silhouetteSlugs.length) {
     conditions.push(
       exists(
@@ -150,12 +173,13 @@ export async function listCatalogue(
     );
   }
   const where = and(...conditions);
-  const orderBy =
+  const priceStatusOrder = sql<number>`case when ${gowns.priceStatus} = 'on_request' then 1 else 0 end`;
+  const orderBy: SQL[] =
     query.sort === "price_asc"
-      ? asc(gowns.priceMinor)
+      ? [asc(priceStatusOrder), asc(gowns.priceMinor), desc(gowns.createdAt)]
       : query.sort === "price_desc"
-        ? desc(gowns.priceMinor)
-        : desc(gowns.createdAt);
+        ? [asc(priceStatusOrder), desc(gowns.priceMinor), desc(gowns.createdAt)]
+        : [asc(priceStatusOrder), desc(gowns.createdAt)];
   const offset = (query.page - 1) * CATALOGUE_PAGE_SIZE;
   const [rows, totalRows] = await Promise.all([
     database
@@ -163,7 +187,7 @@ export async function listCatalogue(
       .from(gowns)
       .leftJoin(gownImages, and(eq(gownImages.gownId, gowns.id), eq(gownImages.isHero, true)))
       .where(where)
-      .orderBy(orderBy)
+      .orderBy(...orderBy)
       .limit(CATALOGUE_PAGE_SIZE)
       .offset(offset),
     database
@@ -173,6 +197,10 @@ export async function listCatalogue(
   ]);
 
   return {
+    canonicalized:
+      silhouetteSlugs.length !== input.silhouette.length ||
+      materialSlugs.length !== input.material.length ||
+      collectionSlugs.length !== input.collection.length,
     cards: rows.map((row) => ({
       id: row.id,
       slug: row.slug,

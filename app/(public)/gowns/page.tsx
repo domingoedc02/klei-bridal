@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getRedirectError } from "next/dist/client/components/redirect";
+import { RedirectType } from "next/dist/client/components/redirect-error";
+import { RedirectStatusCode } from "next/dist/client/components/redirect-status-code";
 
 import { listCatalogue } from "@/server/services/catalogue";
 import {
@@ -103,6 +106,13 @@ export default async function GownsPage({ searchParams }: Props) {
 
   const catalogue = await listCatalogue(parsed.data);
   const { query } = catalogue;
+  if (catalogue.canonicalized) {
+    throw getRedirectError(
+      `/gowns${gownFilterQueryString(query) ? `?${gownFilterQueryString(query)}` : ""}`,
+      RedirectType.replace,
+      302 as RedirectStatusCode,
+    );
+  }
   const queryString = gownFilterQueryString(query);
 
   return (
