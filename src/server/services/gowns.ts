@@ -71,6 +71,10 @@ export async function resolvePublishedGownSlug(
     slug: gowns.slug,
     name: gowns.name,
     description: gowns.description,
+    priceMinor: gowns.priceMinor,
+    currency: gowns.currency,
+    priceStatus: gowns.priceStatus,
+    isInStock: gowns.isInStock,
   };
   const [own] = await db
     .select(columns)

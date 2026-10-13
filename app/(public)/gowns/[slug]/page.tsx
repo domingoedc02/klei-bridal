@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
+import Image from "next/image";
+import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 
-import GownGallery from "@/components/public/GownGallery";
 import { env } from "@/config/env";
 import {
   metadataDescription,
@@ -54,24 +55,33 @@ export default async function GownDetailPage({ params }: Props) {
   // 308, not 301: App Router pages cannot emit 301 (decision/slug-redirect-status).
   if (result.kind === "redirect") permanentRedirect(`${env.SITE_URL}/gowns/${result.gown.slug}`);
   const { gown } = result;
+  const price =
+    gown.priceStatus === "priced" && gown.priceMinor != null
+      ? `${gown.currency ?? "PHP"} ${(gown.priceMinor / 100).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`
+      : "Price on request";
   return (
     <main>
+      <nav aria-label="Breadcrumb">
+        <Link href="/gowns">Browse gowns</Link>
+      </nav>
       <h1>{gown.name}</h1>
+      {gown.isInStock ? <p aria-label="Available now">Available now</p> : null}
+      <p>{price}</p>
       {gown.description ? <p>{gown.description}</p> : null}
-      <GownGallery
-        gownName={gown.name}
-        images={gown.images.map((image) => ({
-          ...image,
-          altText: image.altText ?? null,
-          lqip: image.lqip ?? null,
-          width: image.width ?? 1200,
-          height: image.height ?? 1600,
-          derivatives: image.derivatives as Record<
-            string,
-            Partial<Record<"avif" | "webp" | "jpeg", string>>
-          >,
-        }))}
-      />
+      <section aria-label="Gown photos">
+        {gown.images.map((image) => (
+          <div key={image.id}>
+            <Image
+              src={`/media/${image.id}`}
+              alt={gown.name}
+              width={1200}
+              height={1600}
+              priority={image.isHero}
+            />
+          </div>
+        ))}
+      </section>
+      <Link href={`/enquire?gown=${encodeURIComponent(gown.slug)}`}>Inquire about this gown</Link>
     </main>
   );
 }
