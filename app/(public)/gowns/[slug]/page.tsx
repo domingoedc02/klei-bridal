@@ -55,12 +55,15 @@ export default async function GownDetailPage({ params }: Props) {
   // 308, not 301: App Router pages cannot emit 301 (decision/slug-redirect-status).
   if (result.kind === "redirect") permanentRedirect(`${env.SITE_URL}/gowns/${result.gown.slug}`);
   const { gown } = result;
-  const price = gown.priceStatus === "priced" && gown.priceMinor != null
-    ? `${gown.currency ?? "PHP"} ${(gown.priceMinor / 100).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`
-    : "Price on request";
+  const price =
+    gown.priceStatus === "priced" && gown.priceMinor != null
+      ? `${gown.currency ?? "PHP"} ${(gown.priceMinor / 100).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`
+      : "Price on request";
   return (
     <main>
-      <nav aria-label="Breadcrumb"><Link href="/gowns">Browse gowns</Link></nav>
+      <nav aria-label="Breadcrumb">
+        <Link href="/gowns">Browse gowns</Link>
+      </nav>
       <h1>{gown.name}</h1>
       {gown.isInStock ? <p aria-label="Available now">Available now</p> : null}
       <p>{price}</p>
