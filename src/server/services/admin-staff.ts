@@ -121,6 +121,73 @@ export async function updateStaff(
   ip: string | null,
   db: Database = defaultDb,
 ) {
+  if (patch.password !== undefined && (patch.name !== undefined || patch.is_active !== undefined)) {
+    throw new PipelineError(
+      422,
+      "VALIDATION_ERROR",
+      "Password reset cannot be combined with account changes.",
+    );
+  }
+  if (patch.password !== undefined) {
+    const policy = await assertPasswordAllowed(patch.password);
+    if (!policy.ok) {
+      if (policy.reason === "weak_password") {
+        throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
+          fields: { password: "Choose a longer password." },
+        });
+      }
+      if (policy.reason === "password_too_common") {
+        throw new PipelineError(422, "PASSWORD_TOO_COMMON", "Choose a less common password.", {
+          fields: { password: "Choose a less common password." },
+        });
+      }
+      throw new PipelineError(
+        503,
+        "SERVICE_UNAVAILABLE",
+        "Password policy is temporarily unavailable.",
+      );
+    }
+    const passwordHash = await hashPassword(patch.password);
+    return db.transaction(async (tx) => {
+      const [row] = await tx
+        .select(columns)
+        .from(staffUsers)
+        .where(eq(staffUsers.id, id))
+        .for("update");
+      if (!row) throw new PipelineError(404, "NOT_FOUND", "Staff account not found.");
+      if (!row.isActive)
+        throw new PipelineError(
+          422,
+          "VALIDATION_ERROR",
+          "Disabled accounts must be re-enabled first.",
+        );
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + TEMP_PASSWORD_TTL_MS);
+      const [updated] = await tx
+        .update(staffUsers)
+        .set({
+          passwordHash,
+          tempPasswordExpiresAt: expiresAt,
+          failedLoginCount: 0,
+          lockedUntil: null,
+          updatedAt: now,
+        })
+        .where(eq(staffUsers.id, id))
+        .returning(columns);
+      const revokedSessions = await revokeAllSessionsForUser(tx, id, now);
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: actor.staff.id,
+        action: "staff.password_reset",
+        entityType: "staff_user",
+        entityId: id,
+        detail: {},
+        ip: inetOrNull(ip),
+      });
+      return { ...toJson(updated!), revoked_sessions: revokedSessions };
+    });
+  }
+
   return db.transaction(async (tx) => {
     const active = await tx
       .select({ id: staffUsers.id })

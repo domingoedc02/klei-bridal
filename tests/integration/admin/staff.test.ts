@@ -180,6 +180,27 @@ describe("PATCH /api/admin/staff/:id", () => {
     expect(rows[0]).toMatchObject({ action: "staff.rename", detail: {} });
   });
 
+  it("resets an active account with a temporary password, revokes sessions, and audits without credentials", async () => {
+    const id = await staff("Reset Target");
+    const session = await createSession(db, { staffUserId: id, ip: null, userAgent: null });
+    const temporary = "A-new-temporary-password-99!";
+    const res = await patch(id, { password: temporary });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ id, password_change_pending: true });
+    expect(JSON.stringify(body)).not.toContain(temporary);
+    expect(await validateSession(db, session.token)).toBeNull();
+    const [row] =
+      await sql`SELECT password_hash, temp_password_expires_at FROM staff_users WHERE id = ${id}`;
+    expect(row!.password_hash).toMatch(/^\$argon2id\$/);
+    expect(new Date(row!.temp_password_expires_at).getTime()).toBeGreaterThan(
+      Date.now() + 71 * 60 * 60 * 1000,
+    );
+    const [audit] =
+      await sql`SELECT detail FROM audit_log WHERE entity_id = ${id} AND action = 'staff.password_reset'`;
+    expect(audit!.detail).toEqual({});
+  });
+
   it("refuses self-disable with 409 and changes nothing", async () => {
     const res = await patch(adminId, { is_active: false });
     expect(res.status).toBe(409);
