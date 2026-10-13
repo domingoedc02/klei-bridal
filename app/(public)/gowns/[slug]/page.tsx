@@ -66,7 +66,10 @@ export default async function GownDetailPage({ params }: Props) {
           lqip: image.lqip ?? null,
           width: image.width ?? 1200,
           height: image.height ?? 1600,
-          derivatives: image.derivatives as Record<string, Partial<Record<"avif" | "webp" | "jpeg", string>>>,
+          derivatives: image.derivatives as Record<
+            string,
+            Partial<Record<"avif" | "webp" | "jpeg", string>>
+          >,
         }))}
       />
     </main>
