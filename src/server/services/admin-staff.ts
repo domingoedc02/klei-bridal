@@ -90,7 +90,8 @@ export async function createStaff(
       action: "staff.create",
       entityType: "staff_user",
       entityId: created.id,
-      detail: { email },
+      // Staff email is personal data; entityId already identifies this audit target.
+      detail: {},
       ip: inetOrNull(ip),
     });
     return toJson(created, now);

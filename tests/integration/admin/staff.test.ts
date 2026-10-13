@@ -120,7 +120,7 @@ describe("POST /api/admin/staff", () => {
     ids.push(body.id);
     const [audit] =
       await sql`SELECT detail FROM audit_log WHERE entity_id = ${body.id} AND action = 'staff.create'`;
-    expect(audit!.detail).toEqual({ email });
+    expect(audit!.detail).toEqual({});
   });
 
   it("rejects missing or extra password before insert", async () => {
