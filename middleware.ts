@@ -68,5 +68,15 @@ export function middleware(request: NextRequest) {
   if (mintedCsrf) response.headers.append("set-cookie", csrfSetCookie(mintedCsrf));
   applySecurityHeaders(response.headers, request.nextUrl.pathname, { nonce });
 
+  // Public SSR documents use a short shared cache window. API, media, admin,
+  // and token routes keep their own no-store/security policy.
+  if (
+    request.method === "GET" &&
+    !/^\/(?:api|media|admin|e)\//.test(request.nextUrl.pathname) &&
+    !request.nextUrl.pathname.startsWith("/_next/")
+  ) {
+    response.headers.set("cache-control", "public, max-age=0, s-maxage=60, stale-while-revalidate=300");
+  }
+
   return response;
 }
