@@ -12,6 +12,8 @@ import {
   clearLoginFailures,
   ipRetryAfterMs,
   recordLoginFailure,
+  reserveLoginAccount,
+  reserveLoginIp,
 } from "@/server/ratelimit/login";
 
 const MINUTE = 60_000;
@@ -84,6 +86,19 @@ describe("sign-in limits (spec/api: 10/15min/IP, 5/15min/account + backoff)", ()
     expect(await ipRetryAfterMs(store, "9.9.9.8")).toBeNull();
     advance(WINDOW_MS);
     expect(await ipRetryAfterMs(store, "9.9.9.9")).toBeNull();
+  });
+
+  it("reserves account and IP counters without extending their fixed window", async () => {
+    const { store, advance } = fixture();
+    expect(await reserveLoginAccount(store, "A@X.com ")).toBe(1);
+    expect(await reserveLoginIp(store, "9.9.9.9")).toBe(1);
+    const accountTtl = await store.pttl("login:acct:a@x.com:fail");
+    const ipTtl = await store.pttl("login:ip:9.9.9.9");
+    advance(1_000);
+    expect(await reserveLoginAccount(store, "a@x.com")).toBe(2);
+    expect(await reserveLoginIp(store, "9.9.9.9")).toBe(2);
+    expect(await store.pttl("login:acct:a@x.com:fail")).toBe(accountTtl! - 1_000);
+    expect(await store.pttl("login:ip:9.9.9.9")).toBe(ipTtl! - 1_000);
   });
 
   it("forgets failures older than the window", async () => {
