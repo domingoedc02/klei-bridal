@@ -8,6 +8,7 @@ import { POST as logoutRoute } from "../../../app/api/auth/logout/route";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "@/server/auth/password";
 import { SESSION_COOKIE, hashSessionToken, validateSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
+import { logger } from "@/server/observability/logger";
 import { MemoryAttemptStore } from "@/server/ratelimit/attempt-store";
 import { csrfHeaders } from "../csrf-headers";
 import { signIn, signOut } from "@/server/services/auth";
@@ -159,6 +160,38 @@ describe("no user enumeration, including timing", () => {
     await signIn({ email: disabled.email, password: PASSWORD, ip: ip(), userAgent: null }, deps());
     expect(verify).toHaveBeenCalledTimes(1);
     expect(verify).toHaveBeenCalledWith(DUMMY_PASSWORD_HASH, PASSWORD);
+  });
+
+  it("logs each cap refusal with a short hash and no account key", async () => {
+    const staff = await makeStaff();
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      for (let i = 0; i < 6; i++) {
+        await signIn(
+          {
+            email: staff.email,
+            password: `wrong-${i}`,
+            ip: `198.51.100.${i + 1}`,
+            userAgent: null,
+          },
+          deps(),
+        );
+      }
+      const capCalls = warn.mock.calls.filter(([fields]) => {
+        return (fields as { event?: string })?.event === "auth.attempt_cap";
+      });
+      expect(capCalls).toHaveLength(2);
+      for (const [fields, message] of capCalls) {
+        const value = fields as Record<string, unknown>;
+        expect(message).toBe("auth.attempt_cap");
+        expect(value).toMatchObject({ route: "sign_in", dimension: "account" });
+        expect(value.key_hash).toMatch(/^[0-9a-f]{16}$/);
+        expect(JSON.stringify([fields, message])).not.toContain(staff.email);
+        expect(JSON.stringify([fields, message])).not.toContain("login:acct:");
+      }
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("returns the same 401 body from the route for an unknown email and a wrong password", async () => {
