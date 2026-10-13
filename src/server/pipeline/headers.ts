@@ -42,7 +42,16 @@ export const headerOverrides: readonly HeaderOverride[] = [
     matches: (pathname) => pathname === "/e" || pathname.startsWith("/e/"),
     headers: {
       "referrer-policy": "no-referrer",
+      "cache-control": "no-store",
       "x-robots-tag": "noindex, nofollow",
+    },
+  },
+  {
+    reason: "admin reset password token (KBS-91)",
+    matches: (pathname) => pathname === "/admin/reset-password",
+    headers: {
+      "referrer-policy": "no-referrer",
+      "cache-control": "no-store",
     },
   },
 ];

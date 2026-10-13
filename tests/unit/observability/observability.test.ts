@@ -94,6 +94,17 @@ describe("scrubEvent (Sentry beforeSend)", () => {
     expect(out).toContain('"type":"Error"');
   });
 
+  it("redacts reset tokens in every common URL spelling", () => {
+    for (const value of [
+      "/admin/reset-password?token=" + RESET,
+      "?token=" + RESET,
+      "https://kleibridal.test/admin/reset-password?reset_token=" + RESET,
+    ]) {
+      expect(scrubString(value)).not.toContain(RESET);
+      expect(scrubString(value)).toContain("[redacted]");
+    }
+  });
+
   it("leaves a plain gown path alone", () => {
     expect(scrubString("/gowns/aria-a-line")).toBe("/gowns/aria-a-line");
   });
