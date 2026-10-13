@@ -17,6 +17,7 @@ const STRING_RULES: Array<[RegExp, string]> = [
   [/\/e\/[A-Za-z0-9_-]+/g, `/e/${REDACTED}`],
   // Token-ish query/form parameters (reset links carry `?token=`).
   [/([?&;\s](?:token|reset_token)=)[^&#\s"']+/gi, `$1${REDACTED}`],
+  [/(^|[?&;\s])(?:token|reset_token)=([^&#\s"']+)/gi, `$1token=${REDACTED}`],
   // Our cookies by name, wherever a header dump or message carries them.
   [/((?:kbs_session|kbs_csrf)=)[^;\s"']+/g, `$1${REDACTED}`],
   // Bearer credentials (the mail provider key travels as one).
