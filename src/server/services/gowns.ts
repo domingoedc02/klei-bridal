@@ -41,6 +41,10 @@ export type PublishedGown = {
   slug: string;
   name: string;
   description: string | null;
+  priceMinor?: number | null;
+  currency?: string;
+  priceStatus?: string;
+  isInStock?: boolean;
   images: GownImageForMetadata[];
 };
 
