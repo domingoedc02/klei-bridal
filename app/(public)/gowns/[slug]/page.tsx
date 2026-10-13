@@ -1,8 +1,9 @@
+import React from "react";
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 
+import GownGallery from "@/components/public/GownGallery";
 import { env } from "@/config/env";
 import {
   metadataDescription,
@@ -10,6 +11,7 @@ import {
   type GownImageForMetadata,
   type PublishedGown,
 } from "@/server/services/gowns";
+import type { GalleryImage } from "@/shared/images";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -48,6 +50,23 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return result.kind === "missing" ? {} : buildGownMetadata(result.gown, env.SITE_URL);
 }
 
+function galleryImages(gown: PublishedGown): GalleryImage[] {
+  return gown.images.flatMap((image) => {
+    if (!image.derivatives || typeof image.derivatives !== "object") return [];
+    return [
+      {
+        id: image.id,
+        altText: image.altText ?? null,
+        width: image.width ?? 1200,
+        height: image.height ?? 1600,
+        lqip: image.lqip ?? null,
+        isHero: image.isHero,
+        derivatives: image.derivatives as GalleryImage["derivatives"],
+      },
+    ];
+  });
+}
+
 // Gown detail (KBS-10 builds the real page). Server component; no "use client" here.
 export default async function GownDetailPage({ params }: Props) {
   const result = await resolvePublishedGownSlug((await params).slug);
@@ -59,6 +78,7 @@ export default async function GownDetailPage({ params }: Props) {
     gown.priceStatus === "priced" && gown.priceMinor != null
       ? `${gown.currency ?? "PHP"} ${(gown.priceMinor / 100).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`
       : "Price on request";
+  const images = galleryImages(gown);
   return (
     <main>
       <nav aria-label="Breadcrumb">
@@ -68,19 +88,7 @@ export default async function GownDetailPage({ params }: Props) {
       {gown.isInStock ? <p aria-label="Available now">Available now</p> : null}
       <p>{price}</p>
       {gown.description ? <p>{gown.description}</p> : null}
-      <section aria-label="Gown photos">
-        {gown.images.map((image) => (
-          <div key={image.id}>
-            <Image
-              src={`/media/${image.id}`}
-              alt={gown.name}
-              width={1200}
-              height={1600}
-              priority={image.isHero}
-            />
-          </div>
-        ))}
-      </section>
+      <GownGallery gownName={gown.name} images={images} />
       <Link href={`/enquire?gown=${encodeURIComponent(gown.slug)}`}>Inquire about this gown</Link>
     </main>
   );
