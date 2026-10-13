@@ -43,6 +43,9 @@ describe("gownFilterQuerySchema", () => {
     for (const value of [
       { available: "true" },
       { price_min: "12.5" },
+      { price_min: "1e3" },
+      { price_min: "+100" },
+      { price_min: " 100 " },
       { price_min: "90", price_max: "80" },
       { sort: "popular" },
       { unexpected: "value" },
