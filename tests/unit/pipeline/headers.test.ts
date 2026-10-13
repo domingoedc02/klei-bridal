@@ -44,6 +44,7 @@ describe("security header registry", () => {
       expect(securityHeadersFor(path)).toEqual({
         ...BASELINE,
         "referrer-policy": "no-referrer",
+        "cache-control": "no-store",
         "x-robots-tag": "noindex, nofollow",
       });
     },
