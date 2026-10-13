@@ -14,6 +14,7 @@ import {
   validCsrfToken,
 } from "./src/server/pipeline/csrf";
 import { requestIdOf } from "./src/server/pipeline/request-id";
+import { gownFilterQuerySchema } from "./src/shared/schemas/gownFilters";
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
@@ -61,6 +62,28 @@ export function middleware(request: NextRequest) {
       .map((part) => part.trim())
       .filter((part) => part && !part.startsWith(`${CSRF_COOKIE}=`));
     requestHeaders.set("cookie", [...others, `${CSRF_COOKIE}=${mintedCsrf}`].join("; "));
+  }
+
+  if (request.method === "GET" && request.nextUrl.pathname === "/gowns") {
+    const raw: Record<string, string | string[]> = {};
+    for (const key of new Set(request.nextUrl.searchParams.keys())) {
+      const values = request.nextUrl.searchParams.getAll(key);
+      raw[key] = values.length > 1 ? values : values[0]!;
+    }
+    if (!gownFilterQuerySchema.safeParse(raw).success) {
+      const response = NextResponse.json(
+        {
+          error: {
+            code: "INVALID_QUERY",
+            message: "Invalid catalogue query.",
+            request_id: requestId,
+          },
+        },
+        { status: 400 },
+      );
+      applySecurityHeaders(response.headers, request.nextUrl.pathname, { nonce });
+      return response;
+    }
   }
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
