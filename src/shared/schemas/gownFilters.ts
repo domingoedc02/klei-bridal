@@ -7,15 +7,19 @@ const optionalText = z.preprocess(
 );
 const optionalWholePeso = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-  z.union([
-    z.number().int().min(0).max(9_999_999),
-    z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0).max(9_999_999)),
-  ]).optional(),
+  z
+    .union([
+      z.number().int().min(0).max(9_999_999),
+      z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0).max(9_999_999)),
+    ])
+    .optional(),
 );
 const repeatableSlug = z
   .union([slug, z.array(slug).max(20)])
   .optional()
-  .transform((value) => (value === undefined ? [] : Array.isArray(value) ? [...new Set(value)] : [value]));
+  .transform((value) =>
+    value === undefined ? [] : Array.isArray(value) ? [...new Set(value)] : [value],
+  );
 
 /** Canonical server-side query contract for `/gowns` (spec/api/catalogue). */
 export const gownFilterQuerySchema = z
@@ -35,8 +39,16 @@ export const gownFilterQuerySchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.price_min !== undefined && value.price_max !== undefined && value.price_min > value.price_max) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["price_min"], message: "price_min must not exceed price_max" });
+    if (
+      value.price_min !== undefined &&
+      value.price_max !== undefined &&
+      value.price_min > value.price_max
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["price_min"],
+        message: "price_min must not exceed price_max",
+      });
     }
   });
 

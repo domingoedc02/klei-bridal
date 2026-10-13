@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  gownFilterQuerySchema,
-  gownFilterQueryString,
-} from "../../src/shared/schemas/gownFilters";
+import { gownFilterQuerySchema, gownFilterQueryString } from "../../src/shared/schemas/gownFilters";
 
 describe("gownFilterQuerySchema", () => {
   it("normalizes repeatable URL filters and blank bounds", () => {
