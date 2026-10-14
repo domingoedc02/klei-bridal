@@ -114,6 +114,7 @@ type CacheStats = {
   evictions: number;
   hits: number;
   misses: number;
+  invalidationFailures: number;
 };
 
 /**
@@ -131,6 +132,7 @@ export class CatalogueCache {
     evictions: 0,
     hits: 0,
     misses: 0,
+    invalidationFailures: 0,
   };
 
   get stats(): Readonly<CacheStats> {
@@ -208,6 +210,23 @@ export class CatalogueCache {
       if (options.disable) this.disabled = true;
     } catch {
       this.disabled = true;
+      this.statsState.invalidationFailures += 1;
+    }
+  }
+
+  invalidateAfterCommit(): void {
+    this.invalidate();
+  }
+
+  disableAfterInvalidationFailure(): void {
+    this.epoch += 1;
+    this.disabled = true;
+    this.statsState.invalidationFailures += 1;
+    try {
+      this.entries.clear();
+      this.totalBytes = 0;
+    } catch {
+      // Cache remains disabled; committed mutation must still resolve.
     }
   }
 
@@ -273,6 +292,25 @@ export const catalogueCache = new CatalogueCache();
 
 export function invalidateCatalogueCache(options: { disable?: boolean } = {}): void {
   catalogueCache.invalidate(options);
+}
+
+export function invalidateCatalogueCacheAfterCommit(): void {
+  catalogueCache.invalidateAfterCommit();
+}
+
+export async function afterCatalogueMutation<T>(
+  mutation: Promise<T>,
+  shouldInvalidate: (result: T) => boolean = () => true,
+): Promise<T> {
+  const result = await mutation;
+  if (shouldInvalidate(result)) {
+    try {
+      invalidateCatalogueCacheAfterCommit();
+    } catch {
+      catalogueCache.disableAfterInvalidationFailure();
+    }
+  }
+  return result;
 }
 
 export async function getCatalogueCacheValue(

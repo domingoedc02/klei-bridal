@@ -11,6 +11,7 @@ import { sanitizeImage } from "@/server/media/upload";
 import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
+import { afterCatalogueMutation } from "@/server/services/catalogueCache";
 
 export interface GownImage {
   id: string;
@@ -103,68 +104,70 @@ export async function addGownImages(
     });
   }
 
-  return db.transaction(async (tx) => {
-    for (const image of stored) {
-      await lockOriginalPath(tx, image.path);
-      await storeOriginal(image.data, image.ext).catch(volumeError);
-    }
-    // The gown row lock serialises concurrent uploads to one gown, so the
-    // count, the next sort_order and the hero choice cannot race.
-    const [locked] = await tx
-      .select({ id: gowns.id })
-      .from(gowns)
-      .where(eq(gowns.id, gownId))
-      .for("update");
-    if (!locked) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
-    const [state] = await tx
-      .select({ n: count(), last: max(gownImages.sortOrder) })
-      .from(gownImages)
-      .where(eq(gownImages.gownId, gownId));
-    const existing = state?.n ?? 0;
-    if (existing + stored.length > env.IMAGE_MAX_PER_GOWN) tooMany(existing);
-    const [hero] = await tx
-      .select({ id: gownImages.id })
-      .from(gownImages)
-      .where(and(eq(gownImages.gownId, gownId), eq(gownImages.isHero, true)));
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      for (const image of stored) {
+        await lockOriginalPath(tx, image.path);
+        await storeOriginal(image.data, image.ext).catch(volumeError);
+      }
+      // The gown row lock serialises concurrent uploads to one gown, so the
+      // count, the next sort_order and the hero choice cannot race.
+      const [locked] = await tx
+        .select({ id: gowns.id })
+        .from(gowns)
+        .where(eq(gowns.id, gownId))
+        .for("update");
+      if (!locked) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+      const [state] = await tx
+        .select({ n: count(), last: max(gownImages.sortOrder) })
+        .from(gownImages)
+        .where(eq(gownImages.gownId, gownId));
+      const existing = state?.n ?? 0;
+      if (existing + stored.length > env.IMAGE_MAX_PER_GOWN) tooMany(existing);
+      const [hero] = await tx
+        .select({ id: gownImages.id })
+        .from(gownImages)
+        .where(and(eq(gownImages.gownId, gownId), eq(gownImages.isHero, true)));
 
-    const start = (state?.last ?? -1) + 1;
-    const rows = await tx
-      .insert(gownImages)
-      .values(
-        stored.map((s, i) => ({
-          gownId,
-          sortOrder: start + i,
-          isHero: !hero && i === 0,
-          originalPath: s.path,
-          width: s.width,
-          height: s.height,
-          uploadedBy: actor.staff.id,
+      const start = (state?.last ?? -1) + 1;
+      const rows = await tx
+        .insert(gownImages)
+        .values(
+          stored.map((s, i) => ({
+            gownId,
+            sortOrder: start + i,
+            isHero: !hero && i === 0,
+            originalPath: s.path,
+            width: s.width,
+            height: s.height,
+            uploadedBy: actor.staff.id,
+          })),
+        )
+        .returning();
+      await tx.insert(imageJobs).values(rows.map((r) => ({ gownImageId: r.id })));
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: "gown.image_upload",
+        entityType: "gown",
+        entityId: gownId,
+        detail: { image_ids: rows.map((r) => r.id), count: rows.length },
+        ip: inetOrNull(ip),
+      });
+
+      return {
+        images: rows.map((r) => ({
+          id: r.id,
+          sort_order: r.sortOrder,
+          is_hero: r.isHero,
+          alt_text: r.altText,
+          width: r.width,
+          height: r.height,
+          status: "pending" as const,
         })),
-      )
-      .returning();
-    await tx.insert(imageJobs).values(rows.map((r) => ({ gownImageId: r.id })));
-    await tx.insert(auditLog).values({
-      occurredAt: new Date(),
-      actorUserId: actor.staff.id,
-      action: "gown.image_upload",
-      entityType: "gown",
-      entityId: gownId,
-      detail: { image_ids: rows.map((r) => r.id), count: rows.length },
-      ip: inetOrNull(ip),
-    });
-
-    return {
-      images: rows.map((r) => ({
-        id: r.id,
-        sort_order: r.sortOrder,
-        is_hero: r.isHero,
-        alt_text: r.altText,
-        width: r.width,
-        height: r.height,
-        status: "pending" as const,
-      })),
-    };
-  });
+      };
+    }),
+  );
 }
 
 /**
@@ -275,42 +278,44 @@ export async function reorderGownImages(
   ip: string | null,
   db: Database = defaultDb,
 ): Promise<{ images: GownImage[] }> {
-  await db.transaction(async (tx) => {
-    await lockGown(tx, gownId);
-    const current = await tx
-      .select({ id: gownImages.id })
-      .from(gownImages)
-      .where(eq(gownImages.gownId, gownId));
-    const ids = new Set(current.map((r) => r.id));
-    if (
-      new Set(order).size !== order.length ||
-      order.length !== ids.size ||
-      !order.every((id) => ids.has(id))
-    ) {
-      throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
-        fields: { order: "The photo order must list every photo of this gown exactly once." },
-      });
-    }
-    for (const [i, id] of order.entries()) {
+  await afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      await lockGown(tx, gownId);
+      const current = await tx
+        .select({ id: gownImages.id })
+        .from(gownImages)
+        .where(eq(gownImages.gownId, gownId));
+      const ids = new Set(current.map((r) => r.id));
+      if (
+        new Set(order).size !== order.length ||
+        order.length !== ids.size ||
+        !order.every((id) => ids.has(id))
+      ) {
+        throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
+          fields: { order: "The photo order must list every photo of this gown exactly once." },
+        });
+      }
+      for (const [i, id] of order.entries()) {
+        await tx
+          .update(gownImages)
+          .set({ sortOrder: -(i + 1) })
+          .where(eq(gownImages.id, id));
+      }
       await tx
         .update(gownImages)
-        .set({ sortOrder: -(i + 1) })
-        .where(eq(gownImages.id, id));
-    }
-    await tx
-      .update(gownImages)
-      .set({ sortOrder: sql`-${gownImages.sortOrder} - 1` })
-      .where(eq(gownImages.gownId, gownId));
-    await tx.insert(auditLog).values({
-      occurredAt: new Date(),
-      actorUserId: actor.staff.id,
-      action: "gown.image_reorder",
-      entityType: "gown",
-      entityId: gownId,
-      detail: { order },
-      ip: inetOrNull(ip),
-    });
-  });
+        .set({ sortOrder: sql`-${gownImages.sortOrder} - 1` })
+        .where(eq(gownImages.gownId, gownId));
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: "gown.image_reorder",
+        entityType: "gown",
+        entityId: gownId,
+        detail: { order },
+        ip: inetOrNull(ip),
+      });
+    }),
+  );
   return listGownImages(gownId, db);
 }
 
@@ -326,30 +331,35 @@ export async function setGownHero(
   ip: string | null,
   db: Database = defaultDb,
 ): Promise<{ images: GownImage[] }> {
-  await db.transaction(async (tx) => {
-    await lockGown(tx, gownId);
-    const [image] = await tx
-      .select({ id: gownImages.id, isHero: gownImages.isHero })
-      .from(gownImages)
-      .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)));
-    if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
-    if (image.isHero) return; // already the hero: no write, no audit noise
-    const [previous] = await tx
-      .update(gownImages)
-      .set({ isHero: false })
-      .where(and(eq(gownImages.gownId, gownId), eq(gownImages.isHero, true)))
-      .returning({ id: gownImages.id });
-    await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, imageId));
-    await tx.insert(auditLog).values({
-      occurredAt: new Date(),
-      actorUserId: actor.staff.id,
-      action: "gown.image_hero",
-      entityType: "gown",
-      entityId: gownId,
-      detail: { image_id: imageId, previous_image_id: previous?.id ?? null },
-      ip: inetOrNull(ip),
-    });
-  });
+  let changed = false;
+  await afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      await lockGown(tx, gownId);
+      const [image] = await tx
+        .select({ id: gownImages.id, isHero: gownImages.isHero })
+        .from(gownImages)
+        .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)));
+      if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
+      if (image.isHero) return; // already the hero: no write, no audit noise
+      changed = true;
+      const [previous] = await tx
+        .update(gownImages)
+        .set({ isHero: false })
+        .where(and(eq(gownImages.gownId, gownId), eq(gownImages.isHero, true)))
+        .returning({ id: gownImages.id });
+      await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, imageId));
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: "gown.image_hero",
+        entityType: "gown",
+        entityId: gownId,
+        detail: { image_id: imageId, previous_image_id: previous?.id ?? null },
+        ip: inetOrNull(ip),
+      });
+    }),
+    () => changed,
+  );
   return listGownImages(gownId, db);
 }
 
@@ -362,23 +372,25 @@ export async function updateGownImageAlt(
   ip: string | null,
   db: Database = defaultDb,
 ): Promise<GownImage> {
-  await db.transaction(async (tx) => {
-    const [image] = await tx
-      .update(gownImages)
-      .set({ altText: alt })
-      .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)))
-      .returning({ id: gownImages.id });
-    if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
-    await tx.insert(auditLog).values({
-      occurredAt: new Date(),
-      actorUserId: actor.staff.id,
-      action: "gown_image.alt_update",
-      entityType: "gown",
-      entityId: gownId,
-      detail: { image_id: imageId },
-      ip: inetOrNull(ip),
-    });
-  });
+  await afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const [image] = await tx
+        .update(gownImages)
+        .set({ altText: alt })
+        .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)))
+        .returning({ id: gownImages.id });
+      if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: "gown_image.alt_update",
+        entityType: "gown",
+        entityId: gownId,
+        detail: { image_id: imageId },
+        ip: inetOrNull(ip),
+      });
+    }),
+  );
   const { images } = await listGownImages(gownId, db);
   return images.find((i) => i.id === imageId)!;
 }
@@ -397,45 +409,47 @@ export async function deleteGownImage(
   ip: string | null,
   db: Database = defaultDb,
 ): Promise<void> {
-  const path = await db.transaction(async (tx) => {
-    const [gown] = await tx
-      .select({ status: gowns.status })
-      .from(gowns)
-      .where(eq(gowns.id, gownId))
-      .for("update");
-    if (!gown) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
-    const [image] = await tx
-      .delete(gownImages)
-      .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)))
-      .returning();
-    if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
-    const [next] = await tx
-      .select({ id: gownImages.id })
-      .from(gownImages)
-      .where(eq(gownImages.gownId, gownId))
-      .orderBy(asc(gownImages.sortOrder))
-      .limit(1);
-    if (!next && gown.status === "published") {
-      throw new PipelineError(
-        409,
-        "CONFLICT",
-        "A published gown needs at least one photo. Add another photo or unpublish the gown first.",
-      );
-    }
-    if (image.isHero && next) {
-      await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, next.id));
-    }
-    await tx.insert(auditLog).values({
-      occurredAt: new Date(),
-      actorUserId: actor.staff.id,
-      action: "gown_image.delete",
-      entityType: "gown",
-      entityId: gownId,
-      detail: { image_id: imageId, new_hero_image_id: image.isHero ? (next?.id ?? null) : null },
-      ip: inetOrNull(ip),
-    });
-    return image.originalPath;
-  });
+  const path = await afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const [gown] = await tx
+        .select({ status: gowns.status })
+        .from(gowns)
+        .where(eq(gowns.id, gownId))
+        .for("update");
+      if (!gown) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+      const [image] = await tx
+        .delete(gownImages)
+        .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)))
+        .returning();
+      if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
+      const [next] = await tx
+        .select({ id: gownImages.id })
+        .from(gownImages)
+        .where(eq(gownImages.gownId, gownId))
+        .orderBy(asc(gownImages.sortOrder))
+        .limit(1);
+      if (!next && gown.status === "published") {
+        throw new PipelineError(
+          409,
+          "CONFLICT",
+          "A published gown needs at least one photo. Add another photo or unpublish the gown first.",
+        );
+      }
+      if (image.isHero && next) {
+        await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, next.id));
+      }
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: "gown_image.delete",
+        entityType: "gown",
+        entityId: gownId,
+        detail: { image_id: imageId, new_hero_image_id: image.isHero ? (next?.id ?? null) : null },
+        ip: inetOrNull(ip),
+      });
+      return image.originalPath;
+    }),
+  );
   await removeOriginalIfUnreferenced(path, db).catch((error) =>
     console.error("image delete: original not removed, orphan sweep will retry:", error),
   );

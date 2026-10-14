@@ -15,6 +15,7 @@ import {
   silhouettes,
 } from "@/server/db/schema";
 import type { DbOrTx } from "@/server/auth/session";
+import { afterCatalogueMutation } from "@/server/services/catalogueCache";
 import { slugify } from "@/shared/slug";
 
 export type GownWrite = {
@@ -200,46 +201,48 @@ export async function createAdminGown(
   if (input.currency !== "PHP") fields.currency = "Currency must be PHP.";
   if (Object.keys(fields).length) validation(fields);
   const now = new Date();
-  return db.transaction(async (tx) => {
-    const { materialIds, collectionIds } = await validateRelations(tx, input);
-    const slug = await nextSlug(tx, input.slug, input.name);
-    const [row] = await tx
-      .insert(gowns)
-      .values({
-        slug,
-        name: input.name.trim(),
-        description: input.description ?? null,
-        silhouetteId: input.silhouette_id ?? null,
-        priceMinor: input.price_minor ?? null,
-        currency: input.currency,
-        priceStatus: input.price_status,
-        isInStock: input.is_in_stock,
-        status: "draft",
-        createdBy: actor.staff.id,
-        updatedBy: actor.staff.id,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-    if (!row) throw new PipelineError(500, "INTERNAL_ERROR", "Could not save gown.");
-    if (materialIds.length)
-      await tx
-        .insert(gownMaterials)
-        .values(materialIds.map((materialId) => ({ gownId: row.id, materialId })));
-    if (collectionIds.length)
-      await tx
-        .insert(gownCollections)
-        .values(collectionIds.map((collectionId) => ({ gownId: row.id, collectionId })));
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: actor.staff.id,
-      action: "gown.create",
-      entityType: "gown",
-      entityId: row.id,
-      detail: {},
-    });
-    return presentGown(tx, row);
-  });
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const { materialIds, collectionIds } = await validateRelations(tx, input);
+      const slug = await nextSlug(tx, input.slug, input.name);
+      const [row] = await tx
+        .insert(gowns)
+        .values({
+          slug,
+          name: input.name.trim(),
+          description: input.description ?? null,
+          silhouetteId: input.silhouette_id ?? null,
+          priceMinor: input.price_minor ?? null,
+          currency: input.currency,
+          priceStatus: input.price_status,
+          isInStock: input.is_in_stock,
+          status: "draft",
+          createdBy: actor.staff.id,
+          updatedBy: actor.staff.id,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      if (!row) throw new PipelineError(500, "INTERNAL_ERROR", "Could not save gown.");
+      if (materialIds.length)
+        await tx
+          .insert(gownMaterials)
+          .values(materialIds.map((materialId) => ({ gownId: row.id, materialId })));
+      if (collectionIds.length)
+        await tx
+          .insert(gownCollections)
+          .values(collectionIds.map((collectionId) => ({ gownId: row.id, collectionId })));
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: actor.staff.id,
+        action: "gown.create",
+        entityType: "gown",
+        entityId: row.id,
+        detail: {},
+      });
+      return presentGown(tx, row);
+    }),
+  );
 }
 
 export async function updateAdminGown(
@@ -248,148 +251,154 @@ export async function updateAdminGown(
   actor: Principal,
   db: Database = defaultDb,
 ) {
-  return db.transaction(async (tx) => {
-    const [old] = await tx.select().from(gowns).where(eq(gowns.id, id)).limit(1);
-    if (!old) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
-    if (old.status !== "draft" && input.slug !== undefined && slugify(input.slug) !== old.slug)
-      validation({ slug: "Published gown URLs cannot change." });
-    if (old.status !== "draft" && input.slug !== undefined && slugify(input.slug) === old.slug) {
-      // Accept the form's unchanged slug preview, but never regenerate it.
-    }
-    const merged: Pick<GownWrite, "price_status" | "price_minor"> = {
-      price_status: (input.price_status ?? old.priceStatus) as GownWrite["price_status"],
-      price_minor: input.price_status === undefined ? old.priceMinor : input.price_minor,
-    };
-    const fields: Record<string, string> = {};
-    if (input.name !== undefined && !input.name.trim()) fields.name = "Enter a gown name.";
-    validatePrice(merged, fields);
-    if (input.currency !== undefined && input.currency !== "PHP")
-      fields.currency = "Currency must be PHP.";
-    if (Object.keys(fields).length) validation(fields);
-    const tags = await validateRelations(tx, input);
-    const slug =
-      input.slug === undefined || old.status !== "draft"
-        ? old.slug
-        : await nextSlug(tx, input.slug, input.name ?? old.name, old.slug);
-    const now = new Date();
-    const [row] = await tx
-      .update(gowns)
-      .set({
-        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.silhouette_id !== undefined ? { silhouetteId: input.silhouette_id } : {}),
-        ...(input.price_status !== undefined ? { priceStatus: input.price_status } : {}),
-        ...(input.price_minor !== undefined || input.price_status !== undefined
-          ? { priceMinor: input.price_minor ?? null }
-          : {}),
-        ...(input.currency !== undefined ? { currency: input.currency } : {}),
-        ...(input.is_in_stock !== undefined ? { isInStock: input.is_in_stock } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
-        slug,
-        updatedBy: actor.staff.id,
-        updatedAt: now,
-      })
-      .where(eq(gowns.id, id))
-      .returning();
-    if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
-    if (input.material_ids !== undefined) {
-      await tx.delete(gownMaterials).where(eq(gownMaterials.gownId, id));
-      if (tags.materialIds.length)
-        await tx
-          .insert(gownMaterials)
-          .values(tags.materialIds.map((materialId) => ({ gownId: id, materialId })));
-    }
-    if (input.collection_ids !== undefined) {
-      await tx.delete(gownCollections).where(eq(gownCollections.gownId, id));
-      if (tags.collectionIds.length)
-        await tx
-          .insert(gownCollections)
-          .values(tags.collectionIds.map((collectionId) => ({ gownId: id, collectionId })));
-    }
-    if (changed(old.priceMinor, row.priceMinor) || changed(old.priceStatus, row.priceStatus)) {
-      await tx.insert(priceHistory).values({
-        gownId: id,
-        oldPriceMinor: old.priceMinor,
-        newPriceMinor: row.priceMinor,
-        oldStatus: old.priceStatus,
-        newStatus: row.priceStatus,
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const [old] = await tx.select().from(gowns).where(eq(gowns.id, id)).limit(1);
+      if (!old) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+      if (old.status !== "draft" && input.slug !== undefined && slugify(input.slug) !== old.slug)
+        validation({ slug: "Published gown URLs cannot change." });
+      if (old.status !== "draft" && input.slug !== undefined && slugify(input.slug) === old.slug) {
+        // Accept the form's unchanged slug preview, but never regenerate it.
+      }
+      const merged: Pick<GownWrite, "price_status" | "price_minor"> = {
+        price_status: (input.price_status ?? old.priceStatus) as GownWrite["price_status"],
+        price_minor: input.price_status === undefined ? old.priceMinor : input.price_minor,
+      };
+      const fields: Record<string, string> = {};
+      if (input.name !== undefined && !input.name.trim()) fields.name = "Enter a gown name.";
+      validatePrice(merged, fields);
+      if (input.currency !== undefined && input.currency !== "PHP")
+        fields.currency = "Currency must be PHP.";
+      if (Object.keys(fields).length) validation(fields);
+      const tags = await validateRelations(tx, input);
+      const slug =
+        input.slug === undefined || old.status !== "draft"
+          ? old.slug
+          : await nextSlug(tx, input.slug, input.name ?? old.name, old.slug);
+      const now = new Date();
+      const [row] = await tx
+        .update(gowns)
+        .set({
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.silhouette_id !== undefined ? { silhouetteId: input.silhouette_id } : {}),
+          ...(input.price_status !== undefined ? { priceStatus: input.price_status } : {}),
+          ...(input.price_minor !== undefined || input.price_status !== undefined
+            ? { priceMinor: input.price_minor ?? null }
+            : {}),
+          ...(input.currency !== undefined ? { currency: input.currency } : {}),
+          ...(input.is_in_stock !== undefined ? { isInStock: input.is_in_stock } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          slug,
+          updatedBy: actor.staff.id,
+          updatedAt: now,
+        })
+        .where(eq(gowns.id, id))
+        .returning();
+      if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+      if (input.material_ids !== undefined) {
+        await tx.delete(gownMaterials).where(eq(gownMaterials.gownId, id));
+        if (tags.materialIds.length)
+          await tx
+            .insert(gownMaterials)
+            .values(tags.materialIds.map((materialId) => ({ gownId: id, materialId })));
+      }
+      if (input.collection_ids !== undefined) {
+        await tx.delete(gownCollections).where(eq(gownCollections.gownId, id));
+        if (tags.collectionIds.length)
+          await tx
+            .insert(gownCollections)
+            .values(tags.collectionIds.map((collectionId) => ({ gownId: id, collectionId })));
+      }
+      if (changed(old.priceMinor, row.priceMinor) || changed(old.priceStatus, row.priceStatus)) {
+        await tx.insert(priceHistory).values({
+          gownId: id,
+          oldPriceMinor: old.priceMinor,
+          newPriceMinor: row.priceMinor,
+          oldStatus: old.priceStatus,
+          newStatus: row.priceStatus,
+          actorUserId: actor.staff.id,
+          changedAt: now,
+        });
+      }
+      await tx.insert(auditLog).values({
+        occurredAt: now,
         actorUserId: actor.staff.id,
-        changedAt: now,
+        action: "gown.update",
+        entityType: "gown",
+        entityId: id,
+        detail: {},
       });
-    }
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: actor.staff.id,
-      action: "gown.update",
-      entityType: "gown",
-      entityId: id,
-      detail: {},
-    });
-    return presentGown(tx, row);
-  });
+      return presentGown(tx, row);
+    }),
+  );
 }
 
 export async function publishAdminGown(id: string, actor: Principal, db: Database = defaultDb) {
-  return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(gowns).where(eq(gowns.id, id)).limit(1);
-    if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
-    if (row.status === "published") return presentGown(tx, row);
-    if (row.status === "archived")
-      throw new PipelineError(409, "CONFLICT", "Archived gowns cannot be published.");
-    const [image] = await tx
-      .select({ id: gownImages.id })
-      .from(gownImages)
-      .where(eq(gownImages.gownId, id))
-      .limit(1);
-    if (!image?.id) validation({ images: "Add a gown image before publishing." });
-    if (row.priceStatus === "priced" && (!row.priceMinor || row.priceMinor <= 0)) {
-      validation({ price_minor: "Enter a positive price, or choose price on request." });
-    }
-    const now = new Date();
-    const [updated] = await tx
-      .update(gowns)
-      .set({ status: "published", updatedBy: actor.staff.id, updatedAt: now })
-      .where(eq(gowns.id, id))
-      .returning();
-    if (!updated) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: actor.staff.id,
-      action: "gown.publish",
-      entityType: "gown",
-      entityId: id,
-      detail: {},
-    });
-    return presentGown(tx, updated);
-  });
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const [row] = await tx.select().from(gowns).where(eq(gowns.id, id)).limit(1);
+      if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+      if (row.status === "published") return presentGown(tx, row);
+      if (row.status === "archived")
+        throw new PipelineError(409, "CONFLICT", "Archived gowns cannot be published.");
+      const [image] = await tx
+        .select({ id: gownImages.id })
+        .from(gownImages)
+        .where(eq(gownImages.gownId, id))
+        .limit(1);
+      if (!image?.id) validation({ images: "Add a gown image before publishing." });
+      if (row.priceStatus === "priced" && (!row.priceMinor || row.priceMinor <= 0)) {
+        validation({ price_minor: "Enter a positive price, or choose price on request." });
+      }
+      const now = new Date();
+      const [updated] = await tx
+        .update(gowns)
+        .set({ status: "published", updatedBy: actor.staff.id, updatedAt: now })
+        .where(eq(gowns.id, id))
+        .returning();
+      if (!updated) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: actor.staff.id,
+        action: "gown.publish",
+        entityType: "gown",
+        entityId: id,
+        detail: {},
+      });
+      return presentGown(tx, updated);
+    }),
+  );
 }
 
 export async function deleteAdminGown(id: string, actor: Principal, db: Database = defaultDb) {
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .select({ id: gowns.id, status: gowns.status })
-      .from(gowns)
-      .where(eq(gowns.id, id))
-      .limit(1);
-    if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
-    if (row.status === "published")
-      throw new PipelineError(409, "CONFLICT", "Published gowns cannot be deleted.");
-    if (row.status === "archived")
-      throw new PipelineError(
-        409,
-        "CONFLICT",
-        "Archived gowns can only be restored or deleted by policy.",
-      );
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ id: gowns.id, status: gowns.status })
+        .from(gowns)
+        .where(eq(gowns.id, id))
+        .limit(1);
+      if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
+      if (row.status === "published")
+        throw new PipelineError(409, "CONFLICT", "Published gowns cannot be deleted.");
+      if (row.status === "archived")
+        throw new PipelineError(
+          409,
+          "CONFLICT",
+          "Archived gowns can only be restored or deleted by policy.",
+        );
 
-    const now = new Date();
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: actor.staff.id,
-      action: "gown.delete",
-      entityType: "gown",
-      entityId: id,
-      detail: {},
-    });
-    await tx.delete(gowns).where(eq(gowns.id, id));
-  });
+      const now = new Date();
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: actor.staff.id,
+        action: "gown.delete",
+        entityType: "gown",
+        entityId: id,
+        detail: {},
+      });
+      await tx.delete(gowns).where(eq(gowns.id, id));
+    }),
+  );
 }

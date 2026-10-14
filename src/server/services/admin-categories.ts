@@ -15,6 +15,7 @@ import {
 import type { DbOrTx } from "@/server/auth/session";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
 import { slugify } from "@/shared/slug";
+import { afterCatalogueMutation } from "@/server/services/catalogueCache";
 
 /**
  * KBS-22-1: list / create / rename for the three editable vocabularies
@@ -135,43 +136,46 @@ export async function createCategory(
   db: Database = defaultDb,
 ) {
   const { table: t, entity } = config(type);
-  return db.transaction(async (tx) => {
-    const existing = await exactMatch(tx, t, input.name);
-    if (existing) conflict(existing);
-    if (!input.confirm) {
-      const similar = await tx
-        .select({ id: t.id, name: t.name, slug: t.slug })
-        .from(t)
-        .where(sql`similarity(lower(${t.name}), lower(${input.name})) > ${NEAR_DUP}`)
-        .orderBy(sql`similarity(lower(${t.name}), lower(${input.name})) desc`)
-        .limit(1);
-      if (similar[0]) return { created: false as const, suggestion: similar[0] };
-    }
-    const now = new Date();
-    const [row] = await tx
-      .insert(t)
-      .values({
-        name: input.name,
-        slug: await uniqueSlug(tx, t, input.name, entity),
-        description: input.description ?? null,
-        createdBy: actor.staff.id,
-        updatedBy: actor.staff.id,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-    if (!row) throw new PipelineError(500, "INTERNAL_ERROR", "Could not save this value.");
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: actor.staff.id,
-      action: `${entity}.create`,
-      entityType: entity,
-      entityId: row.id,
-      detail: {},
-      ip: inetOrNull(ip),
-    });
-    return { created: true as const, item: present(row, 0) };
-  });
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const existing = await exactMatch(tx, t, input.name);
+      if (existing) conflict(existing);
+      if (!input.confirm) {
+        const similar = await tx
+          .select({ id: t.id, name: t.name, slug: t.slug })
+          .from(t)
+          .where(sql`similarity(lower(${t.name}), lower(${input.name})) > ${NEAR_DUP}`)
+          .orderBy(sql`similarity(lower(${t.name}), lower(${input.name})) desc`)
+          .limit(1);
+        if (similar[0]) return { created: false as const, suggestion: similar[0] };
+      }
+      const now = new Date();
+      const [row] = await tx
+        .insert(t)
+        .values({
+          name: input.name,
+          slug: await uniqueSlug(tx, t, input.name, entity),
+          description: input.description ?? null,
+          createdBy: actor.staff.id,
+          updatedBy: actor.staff.id,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      if (!row) throw new PipelineError(500, "INTERNAL_ERROR", "Could not save this value.");
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: actor.staff.id,
+        action: `${entity}.create`,
+        entityType: entity,
+        entityId: row.id,
+        detail: {},
+        ip: inetOrNull(ip),
+      });
+      return { created: true as const, item: present(row, 0) };
+    }),
+    (result) => result.created,
+  );
 }
 
 /**
@@ -190,40 +194,47 @@ export async function updateCategory(
   db: Database = defaultDb,
 ) {
   const { table: t, entity, usage } = config(type);
-  return db.transaction(async (tx) => {
-    const [old] = await tx.select().from(t).where(eq(t.id, id)).limit(1).for("update");
-    if (!old) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
-    if (input.name !== undefined) {
-      const existing = await exactMatch(tx, t, input.name, id);
-      if (existing) conflict(existing);
-    }
-    const changes = Object.keys(input).filter((k) => input[k as keyof CategoryPatch] !== undefined);
-    if (changes.length) {
-      const now = new Date();
-      await tx
-        .update(t)
-        .set({
-          ...(input.name !== undefined ? { name: input.name } : {}),
-          ...(input.description !== undefined ? { description: input.description } : {}),
-          ...(input.sort_order !== undefined ? { sortOrder: input.sort_order } : {}),
-          ...(input.is_active !== undefined ? { isActive: input.is_active } : {}),
-          updatedBy: actor.staff.id,
-          updatedAt: now,
-        })
-        .where(eq(t.id, id));
-      await tx.insert(auditLog).values({
-        occurredAt: now,
-        actorUserId: actor.staff.id,
-        action: `${entity}.update`,
-        entityType: entity,
-        entityId: id,
-        detail: { fields: changes },
-        ip: inetOrNull(ip),
-      });
-    }
-    const [row] = await tx.select({ row: t, gownCount: usage() }).from(t).where(eq(t.id, id));
-    return present(row!.row, Number(row!.gownCount));
-  });
+  let changed = false;
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const [old] = await tx.select().from(t).where(eq(t.id, id)).limit(1).for("update");
+      if (!old) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
+      if (input.name !== undefined) {
+        const existing = await exactMatch(tx, t, input.name, id);
+        if (existing) conflict(existing);
+      }
+      const changes = Object.keys(input).filter(
+        (k) => input[k as keyof CategoryPatch] !== undefined,
+      );
+      changed = changes.length > 0;
+      if (changes.length) {
+        const now = new Date();
+        await tx
+          .update(t)
+          .set({
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.description !== undefined ? { description: input.description } : {}),
+            ...(input.sort_order !== undefined ? { sortOrder: input.sort_order } : {}),
+            ...(input.is_active !== undefined ? { isActive: input.is_active } : {}),
+            updatedBy: actor.staff.id,
+            updatedAt: now,
+          })
+          .where(eq(t.id, id));
+        await tx.insert(auditLog).values({
+          occurredAt: now,
+          actorUserId: actor.staff.id,
+          action: `${entity}.update`,
+          entityType: entity,
+          entityId: id,
+          detail: { fields: changes },
+          ip: inetOrNull(ip),
+        });
+      }
+      const [row] = await tx.select({ row: t, gownCount: usage() }).from(t).where(eq(t.id, id));
+      return present(row!.row, Number(row!.gownCount));
+    }),
+    () => changed,
+  );
 }
 
 /**
@@ -239,29 +250,32 @@ export async function deleteCategory(
   db: Database = defaultDb,
 ): Promise<{ deleted: true } | { inUse: number }> {
   const { table: t, entity, usage } = config(type);
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .select({ name: t.name, slug: t.slug })
-      .from(t)
-      .where(eq(t.id, id))
-      .for("update");
-    if (!row) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
-    const [count] = await tx.select({ n: usage() }).from(t).where(eq(t.id, id));
-    const inUse = Number(count!.n);
-    if (inUse > 0) return { inUse };
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ name: t.name, slug: t.slug })
+        .from(t)
+        .where(eq(t.id, id))
+        .for("update");
+      if (!row) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
+      const [count] = await tx.select({ n: usage() }).from(t).where(eq(t.id, id));
+      const inUse = Number(count!.n);
+      if (inUse > 0) return { inUse };
 
-    await tx.delete(t).where(eq(t.id, id));
-    await tx.insert(auditLog).values({
-      occurredAt: new Date(),
-      actorUserId: actor.staff.id,
-      action: `${entity}.delete`,
-      entityType: entity,
-      entityId: id,
-      detail: { name: row.name, slug: row.slug },
-      ip: inetOrNull(ip),
-    });
-    return { deleted: true as const };
-  });
+      await tx.delete(t).where(eq(t.id, id));
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: `${entity}.delete`,
+        entityType: entity,
+        entityId: id,
+        detail: { name: row.name, slug: row.slug },
+        ip: inetOrNull(ip),
+      });
+      return { deleted: true as const };
+    }),
+    (result) => result.deleted === true,
+  );
 }
 
 /** Re-points every gown from `source` to `target`; returns the gowns moved. */
@@ -306,34 +320,36 @@ export async function mergeCategory(
     });
   }
   const { table: t, entity } = config(type);
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select({ id: t.id, name: t.name, slug: t.slug })
-      .from(t)
-      .where(inArray(t.id, [id, targetId]))
-      .orderBy(asc(t.id))
-      .for("update");
-    const source = rows.find((r) => r.id === id);
-    const target = rows.find((r) => r.id === targetId);
-    if (!source || !target) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
+  return afterCatalogueMutation(
+    db.transaction(async (tx) => {
+      const rows = await tx
+        .select({ id: t.id, name: t.name, slug: t.slug })
+        .from(t)
+        .where(inArray(t.id, [id, targetId]))
+        .orderBy(asc(t.id))
+        .for("update");
+      const source = rows.find((r) => r.id === id);
+      const target = rows.find((r) => r.id === targetId);
+      if (!source || !target) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
 
-    const movedCount = await repoint(tx, type, id, targetId);
-    await tx.delete(t).where(eq(t.id, id));
-    await tx.insert(auditLog).values({
-      occurredAt: new Date(),
-      actorUserId: actor.staff.id,
-      action: `${entity}.merge`,
-      entityType: entity,
-      entityId: targetId,
-      detail: {
-        source_id: id,
-        source_name: source.name,
-        source_slug: source.slug,
-        target_id: targetId,
-        moved_count: movedCount,
-      },
-      ip: inetOrNull(ip),
-    });
-    return { moved_count: movedCount };
-  });
+      const movedCount = await repoint(tx, type, id, targetId);
+      await tx.delete(t).where(eq(t.id, id));
+      await tx.insert(auditLog).values({
+        occurredAt: new Date(),
+        actorUserId: actor.staff.id,
+        action: `${entity}.merge`,
+        entityType: entity,
+        entityId: targetId,
+        detail: {
+          source_id: id,
+          source_name: source.name,
+          source_slug: source.slug,
+          target_id: targetId,
+          moved_count: movedCount,
+        },
+        ip: inetOrNull(ip),
+      });
+      return { moved_count: movedCount };
+    }),
+  );
 }
