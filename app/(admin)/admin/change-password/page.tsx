@@ -25,7 +25,9 @@ export default function ChangePasswordPage() {
       },
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     });
-    const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    const body = (await response.json().catch(() => null)) as {
+      error?: { message?: string };
+    } | null;
     if (!response.ok) {
       setError(body?.error?.message ?? "Could not change password.");
       return;
@@ -42,9 +44,25 @@ export default function ChangePasswordPage() {
       <p>Change temporary password before using admin.</p>
       <form onSubmit={(event) => void submit(event)}>
         <label htmlFor="current-password">Current password</label>
-        <input id="current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+        <input
+          id="current-password"
+          type="password"
+          autoComplete="current-password"
+          required
+          value={currentPassword}
+          onChange={(event) => setCurrentPassword(event.target.value)}
+        />
         <label htmlFor="new-password">New password</label>
-        <input id="new-password" type="password" minLength={12} maxLength={1024} autoComplete="new-password" required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+        <input
+          id="new-password"
+          type="password"
+          minLength={12}
+          maxLength={1024}
+          autoComplete="new-password"
+          required
+          value={newPassword}
+          onChange={(event) => setNewPassword(event.target.value)}
+        />
         <button type="submit">Change password</button>
         {error ? <p role="alert">{error}</p> : null}
         {message ? <p role="status">{message}</p> : null}

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { expect, test as base } from "@playwright/test";
+import { expect, test as base, type Page } from "@playwright/test";
 import postgres from "postgres";
 
 const sql = postgres(
@@ -11,6 +11,7 @@ const staffIds: string[] = [];
 // Mocked admin-page tests still render through requireStaffPage(), so give each
 // test its own real DB-backed session before navigation.
 export { expect };
+export type { Page };
 export const test = base;
 
 test.beforeEach(async ({ context, baseURL }) => {

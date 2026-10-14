@@ -104,13 +104,22 @@ describe("POST /api/admin/staff", () => {
     });
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body).toMatchObject({ name: "Created Person", email, is_active: true, password_change_pending: true });
+    expect(body).toMatchObject({
+      name: "Created Person",
+      email,
+      is_active: true,
+      password_change_pending: true,
+    });
     expect(JSON.stringify(body)).not.toContain(password);
-    const [row] = await sql`SELECT password_hash, temp_password_expires_at FROM staff_users WHERE email = ${email}`;
+    const [row] =
+      await sql`SELECT password_hash, temp_password_expires_at FROM staff_users WHERE email = ${email}`;
     expect(row!.password_hash).toMatch(/^\$argon2id\$/);
-    expect(new Date(row!.temp_password_expires_at).getTime()).toBeGreaterThan(Date.now() + 71 * 60 * 60 * 1000);
+    expect(new Date(row!.temp_password_expires_at).getTime()).toBeGreaterThan(
+      Date.now() + 71 * 60 * 60 * 1000,
+    );
     ids.push(body.id);
-    const [audit] = await sql`SELECT detail FROM audit_log WHERE entity_id = ${body.id} AND action = 'staff.create'`;
+    const [audit] =
+      await sql`SELECT detail FROM audit_log WHERE entity_id = ${body.id} AND action = 'staff.create'`;
     expect(audit!.detail).toEqual({ email });
   });
 
@@ -118,8 +127,22 @@ describe("POST /api/admin/staff", () => {
     const email = `invalid-${randomUUID()}@kleibridal.test`;
     const missing = { name: "Invalid", email };
     const extra = { name: "Invalid", email, password: "x", extra: true };
-    expect((await create(req("/api/admin/staff", "POST", missing), { principal: principal(adminId), body: missing as never })).status).toBe(422);
-    expect((await create(req("/api/admin/staff", "POST", extra), { principal: principal(adminId), body: extra as never })).status).toBe(422);
+    expect(
+      (
+        await create(req("/api/admin/staff", "POST", missing), {
+          principal: principal(adminId),
+          body: missing as never,
+        })
+      ).status,
+    ).toBe(422);
+    expect(
+      (
+        await create(req("/api/admin/staff", "POST", extra), {
+          principal: principal(adminId),
+          body: extra as never,
+        })
+      ).status,
+    ).toBe(422);
     const rows = await sql`SELECT id FROM staff_users WHERE email = ${email}`;
     expect(rows).toHaveLength(0);
   });

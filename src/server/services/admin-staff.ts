@@ -54,7 +54,11 @@ export async function createStaff(
         fields: { password: "Choose a less common password." },
       });
     }
-    throw new PipelineError(503, "SERVICE_UNAVAILABLE", "Password policy is temporarily unavailable.");
+    throw new PipelineError(
+      503,
+      "SERVICE_UNAVAILABLE",
+      "Password policy is temporarily unavailable.",
+    );
   }
 
   const passwordHash = await hashPassword(input.password);
