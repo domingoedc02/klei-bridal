@@ -32,6 +32,10 @@ export async function requirePublishedGowns(
 
 export type GownImageForMetadata = {
   id: string;
+  altText?: string | null;
+  width?: number;
+  height?: number;
+  lqip?: string | null;
   isHero: boolean;
   derivatives: unknown;
 };
@@ -41,6 +45,10 @@ export type PublishedGown = {
   slug: string;
   name: string;
   description: string | null;
+  priceMinor?: number | null;
+  currency?: string;
+  priceStatus?: string;
+  isInStock?: boolean;
   images: GownImageForMetadata[];
 };
 
@@ -63,6 +71,10 @@ export async function resolvePublishedGownSlug(
     slug: gowns.slug,
     name: gowns.name,
     description: gowns.description,
+    priceMinor: gowns.priceMinor,
+    currency: gowns.currency,
+    priceStatus: gowns.priceStatus,
+    isInStock: gowns.isInStock,
   };
   const [own] = await db
     .select(columns)
@@ -81,7 +93,15 @@ export async function resolvePublishedGownSlug(
 
 async function withImages(gown: Omit<PublishedGown, "images">, db: Database) {
   const images = await db
-    .select({ id: gownImages.id, isHero: gownImages.isHero, derivatives: gownImages.derivatives })
+    .select({
+      id: gownImages.id,
+      altText: gownImages.altText,
+      width: gownImages.width,
+      height: gownImages.height,
+      lqip: gownImages.lqip,
+      isHero: gownImages.isHero,
+      derivatives: gownImages.derivatives,
+    })
     .from(gownImages)
     .where(eq(gownImages.gownId, gown.id))
     .orderBy(asc(gownImages.sortOrder));
