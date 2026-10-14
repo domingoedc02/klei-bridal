@@ -327,7 +327,8 @@ describe("password change: rotation + revoke every other session", () => {
     });
     expect(result).toEqual({ ok: false, reason: "same_password" });
     expect(await validateSession(db, token)).not.toBeNull();
-    const [row] = await sql`SELECT temp_password_expires_at FROM staff_users WHERE id = ${staff.id}`;
+    const [row] =
+      await sql`SELECT temp_password_expires_at FROM staff_users WHERE id = ${staff.id}`;
     expect(row!.temp_password_expires_at).not.toBeNull();
   });
 

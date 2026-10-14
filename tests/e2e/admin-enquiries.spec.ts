@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./admin-auth";
 
 // KBS-23-3. Enquiry API (KBS-23-1/23-2) mocked at the network layer; the
 // integration suite pins what the real API returns.
