@@ -12,15 +12,16 @@ export const staffCreateSchema = z
   .strict();
 export type StaffCreate = z.infer<typeof staffCreateSchema>;
 
-/** PATCH /admin/staff/:id (KBS-24-1). No delete exists anywhere: a leaver is disabled. */
+/** PATCH /admin/staff/:id. Disable only; password resets force a new temporary password. */
 export const staffPatchSchema = z
   .object({
     name: z.string().trim().min(1, "Enter a name.").max(120, "Use at most 120 characters."),
     is_active: z.boolean(),
+    password,
   })
   .partial()
   .strict()
-  .refine((b) => b.name !== undefined || b.is_active !== undefined, {
-    message: "Send name or is_active.",
+  .refine((b) => b.name !== undefined || b.is_active !== undefined || b.password !== undefined, {
+    message: "Send name, is_active or password.",
   });
 export type StaffPatch = z.infer<typeof staffPatchSchema>;
