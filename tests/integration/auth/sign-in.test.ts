@@ -170,6 +170,7 @@ describe("no user enumeration, including timing", () => {
     const staff = await makeStaff();
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     try {
+      const store = new MemoryAttemptStore();
       for (let i = 0; i < 6; i++) {
         await signIn(
           {
@@ -178,7 +179,7 @@ describe("no user enumeration, including timing", () => {
             ip: `198.51.100.${i + 1}`,
             userAgent: null,
           },
-          deps(),
+          deps(store),
         );
       }
       const capCalls = warn.mock.calls.filter(([fields]) => {
@@ -302,8 +303,8 @@ describe("no user enumeration, including timing", () => {
 describe("lockout (AC-ADM-29)", () => {
   it("after 10 failures from varying IPs, refuses the CORRECT password until backoff clears", async () => {
     const staff = await makeStaff();
-    const store = new MemoryAttemptStore();
     let now = new Date();
+    const store = new MemoryAttemptStore(() => now.getTime());
     const d = deps(store, () => now);
 
     for (let i = 0; i < 10; i++) {

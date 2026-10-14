@@ -25,6 +25,7 @@ import { inetOrNull } from "@/server/ratelimit/client-ip";
 import {
   ACCOUNT_MAX_FAILURES,
   IP_MAX_FAILURES,
+  accountLockedUntil,
   clearLoginFailures,
   loginAccountRetryAfterMs,
   loginAttemptStore,
@@ -107,6 +108,17 @@ export async function signIn(
   let ipFailures: number;
   let accountFailures: number;
   try {
+    const ipRetryMs = await store.pttl(`login:ip:${input.ip}`);
+    if (ipRetryMs !== null && ipRetryMs > 0) {
+      const current = await store.get(`login:ip:${input.ip}`);
+      if (current !== null && current >= IP_MAX_FAILURES) {
+        return {
+          ok: false,
+          reason: "ip_rate_limited",
+          retryAfterSeconds: Math.max(1, Math.ceil(ipRetryMs / 1000)),
+        };
+      }
+    }
     ipFailures = await reserveLoginIp(store, input.ip);
     if (ipFailures > IP_MAX_FAILURES) {
       const retryAfterSeconds = Math.max(
@@ -115,6 +127,12 @@ export async function signIn(
       );
       logAttemptCap("sign_in", "ip", `login:ip:${input.ip}`, retryAfterSeconds);
       return { ok: false, reason: "ip_rate_limited", retryAfterSeconds };
+    }
+    const existingLock = await accountLockedUntil(store, email, now);
+    if (existingLock) {
+      const retryAfterSeconds = secondsUntil(existingLock, now);
+      logAttemptCap("sign_in", "account", `login:acct:${email}:fail`, retryAfterSeconds);
+      return { ok: false, reason: "account_locked", retryAfterSeconds };
     }
     accountFailures = await reserveLoginAccount(store, email);
     if (accountFailures > ACCOUNT_MAX_FAILURES) {
