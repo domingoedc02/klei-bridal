@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./admin-auth";
 
 // KBS-20-3. The gown admin API (KBS-20-1/20-2) is mocked at the network
 // layer here to pin UI-only edge cases (422 keeps typed values, etc.);
