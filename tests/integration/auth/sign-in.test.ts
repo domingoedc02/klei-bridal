@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import Redis from "iovalkey";
 import { NextRequest } from "next/server";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,10 @@ import { POST as logoutRoute } from "../../../app/api/auth/logout/route";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "@/server/auth/password";
 import { SESSION_COOKIE, hashSessionToken, validateSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
-import { MemoryAttemptStore } from "@/server/ratelimit/attempt-store";
+import { logger } from "@/server/observability/logger";
+import { MemoryAttemptStore, type AttemptStore } from "@/server/ratelimit/attempt-store";
+import { ValkeyAttemptStore } from "@/server/ratelimit/valkey-attempt-store";
+import { valkeyOptions } from "@/server/ratelimit/store";
 import { csrfHeaders } from "../csrf-headers";
 import { signIn, signOut } from "@/server/services/auth";
 
@@ -27,7 +31,7 @@ vi.mock("@/server/auth/password", async (importOriginal) => {
 const DATABASE_URL =
   process.env.DATABASE_URL ?? "postgresql://klei:klei_dev_pw@localhost:5432/klei_dev";
 const sql = postgres(DATABASE_URL, { max: 1 });
-
+const valkey = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", valkeyOptions);
 const PASSWORD = "a-real-staff-password-42";
 const created: string[] = [];
 let passwordHash: string;
@@ -50,7 +54,7 @@ async function sessionCount(staffUserId: string) {
   return row!.count;
 }
 
-function deps(store = new MemoryAttemptStore(), now?: () => Date) {
+function deps(store: AttemptStore = new MemoryAttemptStore(), now?: () => Date) {
   return { db, store, ...(now ? { now } : {}) };
 }
 
@@ -68,6 +72,7 @@ afterAll(async () => {
     await sql`DELETE FROM staff_users WHERE id = ANY(${created})`;
   }
   await sql.end();
+  await valkey.quit();
   await db.$client.end();
 });
 
@@ -161,6 +166,108 @@ describe("no user enumeration, including timing", () => {
     expect(verify).toHaveBeenCalledWith(DUMMY_PASSWORD_HASH, PASSWORD);
   });
 
+  it("logs each cap refusal with a short hash and no account key", async () => {
+    const staff = await makeStaff();
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      const store = new MemoryAttemptStore();
+      for (let i = 0; i < 6; i++) {
+        await signIn(
+          {
+            email: staff.email,
+            password: `wrong-${i}`,
+            ip: `198.51.100.${i + 1}`,
+            userAgent: null,
+          },
+          deps(store),
+        );
+      }
+      const capCalls = warn.mock.calls.filter(([fields]) => {
+        return (fields as { event?: string })?.event === "auth.attempt_cap";
+      });
+      expect(capCalls).toHaveLength(2);
+      for (const [fields, message] of capCalls) {
+        const value = fields as Record<string, unknown>;
+        expect(message).toBe("auth.attempt_cap");
+        expect(value).toMatchObject({ route: "sign_in", dimension: "account" });
+        expect(value.key_hash).toMatch(/^[0-9a-f]{16}$/);
+        expect(JSON.stringify([fields, message])).not.toContain(staff.email);
+        expect(JSON.stringify([fields, message])).not.toContain("login:acct:");
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("reserves concurrent same-email attempts at the Valkey cap before verification", async () => {
+    const staff = await makeStaff();
+    const store = new ValkeyAttemptStore(() => valkey);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        signIn(
+          {
+            email: staff.email,
+            password: `wrong-${i}`,
+            ip: `198.51.100.${i + 1}`,
+            userAgent: null,
+          },
+          deps(store),
+        ),
+      ),
+    );
+    expect(
+      results.filter(
+        (result) => result.ok || (!result.ok && result.reason === "invalid_credentials"),
+      ),
+    ).toHaveLength(5);
+    expect(
+      results.filter((result) => !result.ok && result.reason === "account_locked"),
+    ).toHaveLength(15);
+  });
+
+  it("reserves concurrent same-IP attempts at the Valkey cap before verification", async () => {
+    const staff = await makeStaff();
+    const store = new ValkeyAttemptStore(() => valkey);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        signIn(
+          {
+            email: `${staff.email}-${i}`,
+            password: `wrong-${i}`,
+            ip: "198.51.100.240",
+            userAgent: null,
+          },
+          deps(store),
+        ),
+      ),
+    );
+    expect(
+      results.filter((result) => !result.ok && result.reason === "ip_rate_limited"),
+    ).toHaveLength(10);
+  });
+
+  it("fails closed before password verification when Valkey is unavailable", async () => {
+    const staff = await makeStaff();
+    const verify = vi.mocked(verifyPassword);
+    verify.mockClear();
+    const dead = new Redis("redis://127.0.0.1:1", {
+      ...valkeyOptions,
+      lazyConnect: true,
+      retryStrategy: () => null,
+    });
+    dead.on("error", () => {});
+    try {
+      const result = await signIn(
+        { email: staff.email, password: PASSWORD, ip: ip(), userAgent: null },
+        deps(new ValkeyAttemptStore(() => dead)),
+      );
+      expect(result).toEqual({ ok: false, reason: "unavailable", retryAfterSeconds: 30 });
+      expect(verify).not.toHaveBeenCalled();
+    } finally {
+      dead.disconnect();
+    }
+  });
+
   it("returns the same 401 body from the route for an unknown email and a wrong password", async () => {
     const staff = await makeStaff();
     const post = (email: string, password: string) =>
@@ -196,8 +303,8 @@ describe("no user enumeration, including timing", () => {
 describe("lockout (AC-ADM-29)", () => {
   it("after 10 failures from varying IPs, refuses the CORRECT password until backoff clears", async () => {
     const staff = await makeStaff();
-    const store = new MemoryAttemptStore();
     let now = new Date();
+    const store = new MemoryAttemptStore(() => now.getTime());
     const d = deps(store, () => now);
 
     for (let i = 0; i < 10; i++) {

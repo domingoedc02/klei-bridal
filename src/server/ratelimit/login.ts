@@ -37,6 +37,36 @@ export function normaliseEmail(email: string): string {
 const ipKey = (ip: string) => `login:ip:${ip}`;
 const acct = (email: string) => `login:acct:${normaliseEmail(email)}`;
 
+export async function reserveLoginIp(store: AttemptStore, ip: string): Promise<number> {
+  return store.incr(ipKey(ip), WINDOW_MS);
+}
+
+export async function reserveLoginAccount(store: AttemptStore, email: string): Promise<number> {
+  return store.incr(`${acct(email)}:fail`, WINDOW_MS);
+}
+
+export async function loginAccountRetryAfterMs(
+  store: AttemptStore,
+  email: string,
+): Promise<number> {
+  return (await store.pttl(`${acct(email)}:fail`)) ?? WINDOW_MS;
+}
+
+/** Apply existing backoff after a reservation reached the account cap. */
+export async function lockReservedLoginAccount(
+  store: AttemptStore,
+  email: string,
+  now: Date,
+): Promise<Date> {
+  const key = acct(email);
+  const level = await store.incr(`${key}:level`, LEVEL_TTL_MS);
+  const duration = backoffMs(level);
+  const until = now.getTime() + duration;
+  await store.set(`${key}:lock`, until, duration);
+  await store.del([`${key}:fail`]);
+  return new Date(until);
+}
+
 /** Milliseconds until `ip` may try again, or null when it is under the limit. */
 export async function ipRetryAfterMs(store: AttemptStore, ip: string): Promise<number | null> {
   const failures = await store.get(ipKey(ip));
@@ -50,8 +80,11 @@ export async function accountLockedUntil(
   email: string,
   now: Date,
 ): Promise<Date | null> {
-  const until = await store.get(`${acct(email)}:lock`);
-  return until !== null && until > now.getTime() ? new Date(until) : null;
+  const key = acct(email);
+  const until = await store.get(`${key}:lock`);
+  if (until !== null && until > now.getTime()) return new Date(until);
+  if (until !== null) await store.del([`${key}:lock`, `${key}:fail`]);
+  return null;
 }
 
 /**

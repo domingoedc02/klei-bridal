@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "@/server/auth/password";
@@ -19,14 +20,19 @@ import type { AttemptStore } from "@/server/ratelimit/attempt-store";
 import { passwordChangedEmail } from "@/server/mail/templates/password-changed";
 import { sendTransactionalEmail } from "@/server/mail/send";
 import { env } from "@/config/env";
+import { logger } from "@/server/observability/logger";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
 import {
+  ACCOUNT_MAX_FAILURES,
+  IP_MAX_FAILURES,
   accountLockedUntil,
   clearLoginFailures,
-  ipRetryAfterMs,
+  loginAccountRetryAfterMs,
   loginAttemptStore,
+  lockReservedLoginAccount,
   normaliseEmail,
-  recordLoginFailure,
+  reserveLoginAccount,
+  reserveLoginIp,
 } from "@/server/ratelimit/login";
 
 export interface AuthDeps {
@@ -54,6 +60,28 @@ export type SignInResult =
 
 const UNAVAILABLE_RETRY_SECONDS = 30;
 
+function attemptKeyHash(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 16);
+}
+
+function logAttemptCap(
+  route: string,
+  dimension: "account" | "ip",
+  key: string,
+  retryAfterS: number,
+) {
+  logger.warn(
+    {
+      event: "auth.attempt_cap",
+      route,
+      dimension,
+      key_hash: attemptKeyHash(key),
+      retry_after_s: retryAfterS,
+    },
+    "auth.attempt_cap",
+  );
+}
+
 function secondsUntil(until: Date, now: Date): number {
   return Math.max(1, Math.ceil((until.getTime() - now.getTime()) / 1000));
 }
@@ -61,15 +89,13 @@ function secondsUntil(until: Date, now: Date): number {
 /**
  * Sign-in, in this order (KBS-27-1):
  *
- *  1. IP limit (10 failures / 15 min) — refused before any work.
- *  2. Account lock — the email's backoff lock, or `staff_users.locked_until`.
- *     A locked attempt is refused EVEN WITH THE RIGHT PASSWORD (AC-ADM-29)
- *     and never reaches argon2, so it is not a guess.
- *  3. Exactly ONE argon2id verify, always: against the account's hash, or
- *     against DUMMY_PASSWORD_HASH when the email has no account or the
- *     account is disabled. Unknown email, wrong password and disabled
- *     account then cost the same time and return the same result.
- *  4. Success: clear the counters and mint a brand-new session row.
+ *  1. Reserve IP and account attempt counters atomically — refused over cap.
+ *  2. Exactly ONE argon2id verify for an in-cap attempt: against the account's
+ *     hash, or against DUMMY_PASSWORD_HASH when the email has no account or the
+ *     account is disabled. Unknown email, wrong password and disabled account
+ *     then cost the same time and return the same result.
+ *  3. A failed attempt at the account cap applies existing backoff.
+ *  4. Success: clear the account counters and mint a brand-new session row.
  */
 export async function signIn(
   input: { email: string; password: string; ip: string; userAgent: string | null },
@@ -79,17 +105,58 @@ export async function signIn(
   const now = deps.now?.() ?? new Date();
   const email = normaliseEmail(input.email);
 
-  let storeLock: Date | null;
+  let ipFailures: number;
+  let accountFailures: number;
   try {
-    const ipRetryMs = await ipRetryAfterMs(store, input.ip);
-    if (ipRetryMs !== null) {
-      return {
-        ok: false,
-        reason: "ip_rate_limited",
-        retryAfterSeconds: Math.max(1, Math.ceil(ipRetryMs / 1000)),
-      };
+    const ipRetryMs = await store.pttl(`login:ip:${input.ip}`);
+    if (ipRetryMs !== null && ipRetryMs > 0) {
+      const current = await store.get(`login:ip:${input.ip}`);
+      if (current !== null && current >= IP_MAX_FAILURES) {
+        return {
+          ok: false,
+          reason: "ip_rate_limited",
+          retryAfterSeconds: Math.max(1, Math.ceil(ipRetryMs / 1000)),
+        };
+      }
     }
-    storeLock = await accountLockedUntil(store, email, now);
+    ipFailures = await reserveLoginIp(store, input.ip);
+    if (ipFailures > IP_MAX_FAILURES) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil(((await store.pttl(`login:ip:${input.ip}`)) ?? 900_000) / 1000),
+      );
+      logAttemptCap("sign_in", "ip", `login:ip:${input.ip}`, retryAfterSeconds);
+      return { ok: false, reason: "ip_rate_limited", retryAfterSeconds };
+    }
+    const existingLock = await accountLockedUntil(store, email, now);
+    if (existingLock) {
+      const retryAfterSeconds = secondsUntil(existingLock, now);
+      logAttemptCap("sign_in", "account", `login:acct:${email}:fail`, retryAfterSeconds);
+      return { ok: false, reason: "account_locked", retryAfterSeconds };
+    }
+    accountFailures = await reserveLoginAccount(store, email);
+    if (accountFailures > ACCOUNT_MAX_FAILURES) {
+      let retryAfterSeconds: number;
+      if (accountFailures === ACCOUNT_MAX_FAILURES + 1) {
+        const lock = await lockReservedLoginAccount(store, email, now);
+        retryAfterSeconds = secondsUntil(lock, now);
+        await db
+          .update(staffUsers)
+          .set({
+            failedLoginCount: sql`${staffUsers.failedLoginCount} + 1`,
+            lockedUntil: lock,
+            updatedAt: now,
+          })
+          .where(eq(sql`lower(${staffUsers.email})`, email));
+      } else {
+        retryAfterSeconds = Math.max(
+          1,
+          Math.ceil((await loginAccountRetryAfterMs(store, email)) / 1000),
+        );
+      }
+      logAttemptCap("sign_in", "account", `login:acct:${email}:fail`, retryAfterSeconds);
+      return { ok: false, reason: "account_locked", retryAfterSeconds };
+    }
   } catch {
     return { ok: false, reason: "unavailable", retryAfterSeconds: UNAVAILABLE_RETRY_SECONDS };
   }
@@ -99,20 +166,6 @@ export async function signIn(
     .from(staffUsers)
     .where(eq(sql`lower(${staffUsers.email})`, email))
     .limit(1);
-
-  // `staff_users.locked_until` is trusted only while Valkey ALSO holds the
-  // lock. Valkey locks any email, account or not; the row exists only for
-  // real accounts — so honouring the row alone (e.g. after Valkey lost its
-  // keys) would lock real accounts but not unknown emails: an enumeration
-  // oracle. The row still supplies the later end when both exist.
-  const dbLock = storeLock && user?.lockedUntil && user.lockedUntil > now ? user.lockedUntil : null;
-  const lock = [storeLock, dbLock].reduce<Date | null>(
-    (latest, d) => (d && (!latest || d > latest) ? d : latest),
-    null,
-  );
-  if (lock) {
-    return { ok: false, reason: "account_locked", retryAfterSeconds: secondsUntil(lock, now) };
-  }
 
   const usable = user?.isActive ? user : undefined;
   const passwordOk = await verifyPassword(
@@ -125,22 +178,17 @@ export async function signIn(
     !passwordOk ||
     (usable.tempPasswordExpiresAt !== null && usable.tempPasswordExpiresAt <= now)
   ) {
-    let newLock: Date | null;
-    try {
-      newLock = await recordLoginFailure(store, input.ip, email, now);
-    } catch {
-      return { ok: false, reason: "unavailable", retryAfterSeconds: UNAVAILABLE_RETRY_SECONDS };
+    if (accountFailures === ACCOUNT_MAX_FAILURES) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((await loginAccountRetryAfterMs(store, email)) / 1000),
+      );
+      logAttemptCap("sign_in", "account", `login:acct:${email}:fail`, retryAfterSeconds);
     }
     if (user) {
-      // Durable copy of the lock, for an admin screen to show and clear.
-      // It never locks on its own (see dbLock above).
       await db
         .update(staffUsers)
-        .set({
-          failedLoginCount: sql`${staffUsers.failedLoginCount} + 1`,
-          ...(newLock ? { lockedUntil: newLock } : {}),
-          updatedAt: now,
-        })
+        .set({ failedLoginCount: sql`${staffUsers.failedLoginCount} + 1`, updatedAt: now })
         .where(eq(staffUsers.id, user.id));
     }
     return { ok: false, reason: "invalid_credentials" };
@@ -264,13 +312,13 @@ export async function changePassword(
   // the password is verified, so a right guess can't be confirmed. A store
   // outage fails closed (503) and nothing changes.
   const key = pwchgKey(session.staff.id);
+  let failures: number;
   try {
-    if (((await store.get(key)) ?? 0) >= PASSWORD_CHANGE_MAX_FAILURES) {
-      return {
-        ok: false,
-        reason: "too_many_attempts",
-        retryAfterSeconds: await retryAfterSeconds(store, key),
-      };
+    failures = await store.incr(key, PASSWORD_CHANGE_WINDOW_MS);
+    if (failures > PASSWORD_CHANGE_MAX_FAILURES) {
+      const retryAfter = await retryAfterSeconds(store, key);
+      logAttemptCap("change_password", "account", key, retryAfter);
+      return { ok: false, reason: "too_many_attempts", retryAfterSeconds: retryAfter };
     }
   } catch {
     return { ok: false, reason: "unavailable" };
@@ -282,14 +330,6 @@ export async function changePassword(
     .where(eq(staffUsers.id, session.staff.id))
     .limit(1);
   if (!user || !(await verifyPassword(user.passwordHash, input.currentPassword))) {
-    let failures: number;
-    let retry: number;
-    try {
-      failures = await store.incr(key, PASSWORD_CHANGE_WINDOW_MS);
-      retry = failures >= PASSWORD_CHANGE_MAX_FAILURES ? await retryAfterSeconds(store, key) : 0;
-    } catch {
-      return { ok: false, reason: "unavailable" };
-    }
     if (failures < PASSWORD_CHANGE_MAX_FAILURES)
       return { ok: false, reason: "wrong_current_password" };
     // The session that tripped the limit is revoked: a stolen cookie gets
@@ -306,7 +346,9 @@ export async function changePassword(
         detail: { session_id: session.sessionId, failures },
       });
     });
-    return { ok: false, reason: "too_many_attempts", retryAfterSeconds: retry };
+    const retryAfter = await retryAfterSeconds(store, key);
+    logAttemptCap("change_password", "account", key, retryAfter);
+    return { ok: false, reason: "too_many_attempts", retryAfterSeconds: retryAfter };
   }
   if (input.newPassword === input.currentPassword) {
     return { ok: false, reason: "same_password" };

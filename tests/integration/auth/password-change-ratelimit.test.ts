@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import Redis from "iovalkey";
 import { NextRequest } from "next/server";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -8,6 +9,8 @@ import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { SESSION_COOKIE, validateSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { MemoryAttemptStore, type AttemptStore } from "@/server/ratelimit/attempt-store";
+import { ValkeyAttemptStore } from "@/server/ratelimit/valkey-attempt-store";
+import { valkeyOptions } from "@/server/ratelimit/store";
 import { csrfHeaders } from "../csrf-headers";
 import { changePassword, signIn } from "@/server/services/auth";
 
@@ -19,6 +22,7 @@ import { changePassword, signIn } from "@/server/services/auth";
 const DATABASE_URL =
   process.env.DATABASE_URL ?? "postgresql://klei:klei_dev_pw@localhost:5432/klei_dev";
 const sql = postgres(DATABASE_URL, { max: 1 });
+const valkey = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", valkeyOptions);
 
 const PASSWORD = "a-real-staff-password-42";
 const NEW_PASSWORD = "brand-new-staff-passphrase-77";
@@ -83,6 +87,7 @@ afterAll(async () => {
     await sql`DELETE FROM staff_users WHERE id = ANY(${created})`;
   }
   await sql.end();
+  await valkey.quit();
   await db.$client.end();
 });
 
@@ -133,6 +138,33 @@ describe("change-password lockout (KBS-63)", () => {
         reason: "wrong_current_password",
       });
     }
+  });
+
+  it("reserves 20 concurrent password changes at one per-user cap", async () => {
+    const staff = await makeStaff();
+    const token = await signedIn(staff);
+    const store = new ValkeyAttemptStore(() => valkey);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        changePassword(
+          {
+            token,
+            currentPassword: `wrong-${i}`,
+            newPassword: NEW_PASSWORD,
+            ip: null,
+            userAgent: null,
+          },
+          { db, store },
+        ),
+      ),
+    );
+    expect(
+      results.filter((result) => !result.ok && result.reason === "wrong_current_password"),
+    ).toHaveLength(4);
+    expect(
+      results.filter((result) => !result.ok && result.reason === "too_many_attempts"),
+    ).toHaveLength(16);
+    expect(await lockedRows(staff.id)).toBe(1);
   });
 
   it("fails closed when the attempt store is down: unavailable, password unchanged", async () => {
