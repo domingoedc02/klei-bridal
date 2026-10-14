@@ -136,10 +136,24 @@ export async function signIn(
     }
     accountFailures = await reserveLoginAccount(store, email);
     if (accountFailures > ACCOUNT_MAX_FAILURES) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil((await loginAccountRetryAfterMs(store, email)) / 1000),
-      );
+      let retryAfterSeconds: number;
+      if (accountFailures === ACCOUNT_MAX_FAILURES + 1) {
+        const lock = await lockReservedLoginAccount(store, email, now);
+        retryAfterSeconds = secondsUntil(lock, now);
+        await db
+          .update(staffUsers)
+          .set({
+            failedLoginCount: sql`${staffUsers.failedLoginCount} + 1`,
+            lockedUntil: lock,
+            updatedAt: now,
+          })
+          .where(eq(sql`lower(${staffUsers.email})`, email));
+      } else {
+        retryAfterSeconds = Math.max(
+          1,
+          Math.ceil((await loginAccountRetryAfterMs(store, email)) / 1000),
+        );
+      }
       logAttemptCap("sign_in", "account", `login:acct:${email}:fail`, retryAfterSeconds);
       return { ok: false, reason: "account_locked", retryAfterSeconds };
     }
@@ -164,28 +178,18 @@ export async function signIn(
     !passwordOk ||
     (usable.tempPasswordExpiresAt !== null && usable.tempPasswordExpiresAt <= now)
   ) {
-    let newLock: Date | null = null;
-    try {
-      if (accountFailures === ACCOUNT_MAX_FAILURES) {
-        newLock = await lockReservedLoginAccount(store, email, now);
-      }
-    } catch {
-      return { ok: false, reason: "unavailable", retryAfterSeconds: UNAVAILABLE_RETRY_SECONDS };
+    if (accountFailures === ACCOUNT_MAX_FAILURES) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((await loginAccountRetryAfterMs(store, email)) / 1000),
+      );
+      logAttemptCap("sign_in", "account", `login:acct:${email}:fail`, retryAfterSeconds);
     }
     if (user) {
       await db
         .update(staffUsers)
-        .set({
-          failedLoginCount: sql`${staffUsers.failedLoginCount} + 1`,
-          ...(newLock ? { lockedUntil: newLock } : {}),
-          updatedAt: now,
-        })
+        .set({ failedLoginCount: sql`${staffUsers.failedLoginCount} + 1`, updatedAt: now })
         .where(eq(staffUsers.id, user.id));
-    }
-    if (newLock) {
-      const retryAfterSeconds = secondsUntil(newLock, now);
-      logAttemptCap("sign_in", "account", `login:acct:${email}:fail`, retryAfterSeconds);
-      return { ok: false, reason: "account_locked", retryAfterSeconds };
     }
     return { ok: false, reason: "invalid_credentials" };
   }
