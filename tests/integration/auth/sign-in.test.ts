@@ -219,10 +219,10 @@ describe("no user enumeration, including timing", () => {
       results.filter(
         (result) => result.ok || (!result.ok && result.reason === "invalid_credentials"),
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(
       results.filter((result) => !result.ok && result.reason === "account_locked"),
-    ).toHaveLength(16);
+    ).toHaveLength(15);
   });
 
   it("reserves concurrent same-IP attempts at the Valkey cap before verification", async () => {
