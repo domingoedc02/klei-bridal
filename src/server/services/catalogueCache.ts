@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CataloguePage } from "@/server/services/catalogue";
+import { logger } from "@/server/observability/logger";
 import {
   gownFilterQuerySchema,
   gownFilterQueryString,
@@ -114,6 +115,7 @@ type CacheStats = {
   evictions: number;
   hits: number;
   misses: number;
+  invalidationFailures: number;
 };
 
 /**
@@ -124,17 +126,22 @@ export class CatalogueCache {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly inFlight = new Map<string, Promise<CatalogueCacheValue>>();
   private totalBytes = 0;
-  private epoch = 0;
+  private epochValue = 0;
   private disabled = false;
   private readonly statsState: CacheStats = {
     epochDiscarded: 0,
     evictions: 0,
     hits: 0,
     misses: 0,
+    invalidationFailures: 0,
   };
 
   get stats(): Readonly<CacheStats> {
     return { ...this.statsState };
+  }
+
+  get epoch(): number {
+    return this.epochValue;
   }
 
   get size(): number {
@@ -201,18 +208,35 @@ export class CatalogueCache {
   }
 
   invalidate(options: { disable?: boolean } = {}): void {
-    this.epoch += 1;
+    this.epochValue += 1;
     try {
       this.entries.clear();
       this.totalBytes = 0;
       if (options.disable) this.disabled = true;
     } catch {
       this.disabled = true;
+      this.statsState.invalidationFailures += 1;
+    }
+  }
+
+  invalidateAfterCommit(): void {
+    this.invalidate();
+  }
+
+  disableAfterInvalidationFailure(): void {
+    this.epochValue += 1;
+    this.disabled = true;
+    this.statsState.invalidationFailures += 1;
+    try {
+      this.entries.clear();
+      this.totalBytes = 0;
+    } catch {
+      // Cache remains disabled; committed mutation must still resolve.
     }
   }
 
   clear(): void {
-    this.epoch += 1;
+    this.epochValue += 1;
     try {
       this.entries.clear();
       this.totalBytes = 0;
@@ -273,6 +297,29 @@ export const catalogueCache = new CatalogueCache();
 
 export function invalidateCatalogueCache(options: { disable?: boolean } = {}): void {
   catalogueCache.invalidate(options);
+}
+
+export function invalidateCatalogueCacheAfterCommit(): void {
+  catalogueCache.invalidateAfterCommit();
+}
+
+export async function afterCatalogueMutation<T>(
+  mutation: Promise<T>,
+  shouldInvalidate: (result: T) => boolean = () => true,
+): Promise<T> {
+  const result = await mutation;
+  if (shouldInvalidate(result)) {
+    try {
+      invalidateCatalogueCacheAfterCommit();
+    } catch (error) {
+      catalogueCache.disableAfterInvalidationFailure();
+      logger.error(
+        { event: "catalogue_cache_invalidation_failed", err: error },
+        "catalogue_cache_invalidation_failed",
+      );
+    }
+  }
+  return result;
 }
 
 export async function getCatalogueCacheValue(

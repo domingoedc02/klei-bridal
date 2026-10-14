@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import { logger } from "@/server/observability/logger";
 
 import type { CataloguePage } from "../../src/server/services/catalogue";
 import type { CatalogueCacheValue } from "../../src/server/services/catalogueCache";
 import {
   assertPublicCatalogueCacheValue,
+  afterCatalogueMutation,
   CatalogueCache,
+  catalogueCache,
   catalogueCacheKey,
   isCatalogueCacheEligible,
   parseCatalogueCacheQuery,
@@ -240,6 +244,34 @@ describe("catalogue cache query contract", () => {
     expect(await loading).toBe(recovered);
     expect(cache.read("recovery")).toBe(recovered);
     expect(cache.stats.epochDiscarded).toBe(1);
+  });
+
+  it("advances epoch and disables cache when invalidation fails", async () => {
+    const cache = catalogueCache;
+    cache.clear();
+    const value = toPublicCatalogueCacheValue(pageFor(1));
+    cache.write("failure", value);
+    const before = cache.epoch;
+    const invalidate = vi.spyOn(cache, "invalidateAfterCommit").mockImplementation(() => {
+      throw new Error("cache clear failed; token=secret");
+    });
+    const disable = vi.spyOn(cache, "disableAfterInvalidationFailure");
+    const log = vi.spyOn(logger, "error").mockImplementation(() => logger);
+
+    await expect(afterCatalogueMutation(Promise.resolve("saved"))).resolves.toBe("saved");
+    expect(cache.epoch).toBeGreaterThan(before);
+    expect(cache.isDisabled).toBe(true);
+    expect(cache.read("failure")).toBeUndefined();
+    expect(cache.stats.invalidationFailures).toBeGreaterThanOrEqual(1);
+    expect(disable).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(
+      { event: "catalogue_cache_invalidation_failed", err: expect.any(Error) },
+      "catalogue_cache_invalidation_failed",
+    );
+
+    invalidate.mockRestore();
+    disable.mockRestore();
+    log.mockRestore();
   });
 
   it("bypasses reads and writes when disabled", async () => {
