@@ -7,6 +7,7 @@ import type { CatalogueCacheValue } from "../../src/server/services/catalogueCac
 import {
   assertPublicCatalogueCacheValue,
   afterCatalogueMutation,
+  CATALOGUE_CACHE_MAX_BYTES,
   CatalogueCache,
   catalogueCache,
   catalogueCacheKey,
@@ -207,6 +208,17 @@ describe("catalogue cache query contract", () => {
     await cache.getOrLoad("ttl", async () => value, 1_000);
     expect(cache.read("ttl", 60_999)).toBe(value);
     expect(cache.read("ttl", 61_001)).toBeUndefined();
+  });
+
+  it("counts UTF-8 bytes strictly below the 64 MiB ceiling", () => {
+    const cache = new CatalogueCache();
+    const value = toPublicCatalogueCacheValue(pageFor(1));
+    const payload = value as CatalogueCacheValue & { payload?: string };
+    payload.payload = "é".repeat(Math.ceil(CATALOGUE_CACHE_MAX_BYTES / 2));
+
+    expect(cache.write("too-large", payload)).toBe(false);
+    expect(cache.size).toBe(0);
+    delete payload.payload;
   });
 
   it("discards result loaded before invalidation", async () => {
