@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./admin-auth";
 
 const gownId = "0192a000-0000-7000-8000-000000000021";
 const base = `**/api/admin/gowns/${gownId}`;

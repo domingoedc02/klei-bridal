@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "./admin-auth";
 
 // KBS-21-5/-6. Images API mocked at network layer (spec/api/admin-images
 // shapes); server routes covered by KBS-21-1/-4 tests.
