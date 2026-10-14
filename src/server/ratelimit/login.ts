@@ -63,6 +63,7 @@ export async function lockReservedLoginAccount(
   const duration = backoffMs(level);
   const until = now.getTime() + duration;
   await store.set(`${key}:lock`, until, duration);
+  await store.del([`${key}:fail`]);
   return new Date(until);
 }
 
@@ -79,8 +80,11 @@ export async function accountLockedUntil(
   email: string,
   now: Date,
 ): Promise<Date | null> {
-  const until = await store.get(`${acct(email)}:lock`);
-  return until !== null && until > now.getTime() ? new Date(until) : null;
+  const key = acct(email);
+  const until = await store.get(`${key}:lock`);
+  if (until !== null && until > now.getTime()) return new Date(until);
+  if (until !== null) await store.del([`${key}:lock`, `${key}:fail`]);
+  return null;
 }
 
 /**
