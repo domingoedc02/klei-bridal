@@ -13,7 +13,6 @@ import {
 import { MEDIA_PREFIX } from "@/shared/images";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 60;
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type Props = { searchParams: Promise<SearchParams> };
