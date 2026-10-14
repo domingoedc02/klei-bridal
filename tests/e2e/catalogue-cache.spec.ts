@@ -9,7 +9,8 @@ for (const width of [390, 1280]) {
     expect(firstResponse?.headers()["cache-control"]).not.toMatch(
       /public|s-maxage|stale-while-revalidate/i,
     );
-    expect(firstResponse?.headers()["set-cookie"]).toContain("kbs_csrf=");
+    const csrfCookie = (await context.cookies()).find(({ name }) => name === "kbs_csrf");
+    expect(csrfCookie?.value).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     const firstCsp = firstResponse?.headers()["content-security-policy-report-only"];
     expect(firstCsp).toMatch(/nonce-[A-Za-z0-9_-]+/);
 
