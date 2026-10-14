@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CataloguePage } from "../../src/server/services/catalogue";
+import type { CatalogueCacheValue } from "../../src/server/services/catalogueCache";
 import {
   assertPublicCatalogueCacheValue,
   CatalogueCache,
@@ -126,6 +127,49 @@ describe("catalogue cache query contract", () => {
     expect(() => assertPublicCatalogueCacheValue(value)).not.toThrow();
   });
 
+  it("falls back when serialization fails", async () => {
+    const cache = new CatalogueCache();
+    const value = toPublicCatalogueCacheValue(pageFor(1));
+    const circular = value as CatalogueCacheValue & { circular?: unknown };
+    circular.circular = circular;
+    let calls = 0;
+    expect(
+      await cache.getOrLoad("serialization", async () => {
+        calls += 1;
+        return circular;
+      }),
+    ).toBe(circular);
+    expect(calls).toBe(1);
+    expect(cache.size).toBe(0);
+    delete circular.circular;
+  });
+
+  it("falls back when cache read or write fails", async () => {
+    const cache = new CatalogueCache();
+    const value = toPublicCatalogueCacheValue(pageFor(1));
+    const read = cache.read.bind(cache);
+    cache.read = () => {
+      throw new Error("read failed");
+    };
+    expect(await cache.getOrLoad("read-failure", async () => value)).toBe(value);
+    cache.read = read;
+    cache.write = () => {
+      throw new Error("write failed");
+    };
+    expect(await cache.getOrLoad("write-failure", async () => value)).toBe(value);
+  });
+
+  it("cleans rejected loader and propagates dual failure", async () => {
+    const cache = new CatalogueCache();
+    const failure = new Error("database unavailable");
+    await expect(cache.getOrLoad("rejected", async () => Promise.reject(failure))).rejects.toBe(
+      failure,
+    );
+    await expect(cache.getOrLoad("rejected", async () => Promise.reject(failure))).rejects.toBe(
+      failure,
+    );
+  });
+
   it("bounds entries and evicts oldest first", async () => {
     const cache = new CatalogueCache();
     for (let i = 0; i < 513; i += 1) {
@@ -176,11 +220,35 @@ describe("catalogue cache query contract", () => {
     expect(cache.stats.epochDiscarded).toBe(1);
   });
 
+  it("rechecks epoch after recovery load", async () => {
+    const cache = new CatalogueCache();
+    const initial = toPublicCatalogueCacheValue(pageFor(1));
+    const recovered = toPublicCatalogueCacheValue(pageFor(2));
+    let calls = 0;
+    let resolveRecovery!: (value: typeof recovered) => void;
+    const recovery = new Promise<typeof recovered>((done) => {
+      resolveRecovery = done;
+    });
+    const loading = cache.getOrLoad("recovery", async () => {
+      calls += 1;
+      if (calls === 1) return initial;
+      if (calls === 2) return recovery;
+      return recovered;
+    });
+    cache.invalidate();
+    resolveRecovery(recovered);
+    expect(await loading).toBe(recovered);
+    expect(cache.read("recovery")).toBe(recovered);
+    expect(cache.stats.epochDiscarded).toBe(1);
+  });
+
   it("bypasses reads and writes when disabled", async () => {
     const cache = new CatalogueCache();
-    cache.invalidate({ disable: true });
-    let calls = 0;
     const value = toPublicCatalogueCacheValue(pageFor(1));
+    expect(cache.write("disabled", value)).toBe(true);
+    cache.invalidate({ disable: true });
+    expect(cache.read("disabled")).toBeUndefined();
+    let calls = 0;
     expect(
       await cache.getOrLoad("disabled", async () => {
         calls += 1;

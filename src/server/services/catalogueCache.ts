@@ -174,24 +174,23 @@ export class CatalogueCache {
     const promise = (async () => {
       const value = await loader();
       assertPublicCatalogueCacheValue(value);
-      if (loadEpoch !== this.epoch || this.disabled) {
+      let currentValue = value;
+      let currentEpoch = loadEpoch;
+      while (currentEpoch !== this.epoch || this.disabled) {
         this.statsState.epochDiscarded += 1;
         if (this.disabled) return loader();
-        const freshValue = await loader();
-        assertPublicCatalogueCacheValue(freshValue);
-        try {
-          this.write(key, freshValue, now);
-        } catch {
-          // Cache storage is best effort. Return fresh DB value on cache failure.
-        }
-        return freshValue;
+        currentEpoch = this.epoch;
+        currentValue = await loader();
+        assertPublicCatalogueCacheValue(currentValue);
+        currentEpoch = this.epoch;
       }
+      if (currentEpoch !== this.epoch || this.disabled) return loader();
       try {
-        this.write(key, value, now);
+        this.write(key, currentValue, now);
       } catch {
         // Cache storage is best effort. Return fresh DB value on cache failure.
       }
-      return value;
+      return currentValue;
     })();
     this.inFlight.set(key, promise);
     try {
@@ -224,6 +223,7 @@ export class CatalogueCache {
   }
 
   read(key: string, now = Date.now()): CatalogueCacheValue | undefined {
+    if (this.disabled) return undefined;
     const entry = this.entries.get(key);
     if (!entry) return undefined;
     if (entry.expiresAt <= now) {
