@@ -335,11 +335,13 @@ export async function updateAdminGown(
 }
 
 export async function publishAdminGown(id: string, actor: Principal, db: Database = defaultDb) {
+  let changed = false;
   return afterCatalogueMutation(
     db.transaction(async (tx) => {
       const [row] = await tx.select().from(gowns).where(eq(gowns.id, id)).limit(1);
       if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
       if (row.status === "published") return presentGown(tx, row);
+      changed = true;
       if (row.status === "archived")
         throw new PipelineError(409, "CONFLICT", "Archived gowns cannot be published.");
       const [image] = await tx
@@ -368,6 +370,7 @@ export async function publishAdminGown(id: string, actor: Principal, db: Databas
       });
       return presentGown(tx, updated);
     }),
+    () => changed,
   );
 }
 

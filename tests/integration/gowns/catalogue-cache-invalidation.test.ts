@@ -1,9 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import postgres from "postgres";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { db } from "@/server/db/client";
+
+const sql = postgres(
+  process.env.DATABASE_URL ?? "postgresql://klei:klei_dev_pw@localhost:5432/klei_dev",
+  { max: 1 },
+);
+let actor: Principal;
+const gownIds: string[] = [];
+const imageIds: string[] = [];
+const staffId = randomUUID();
+import type { Principal } from "@/server/pipeline";
+import { createCategory } from "@/server/services/admin-categories";
+import { updateGownImageAlt } from "@/server/services/admin-gown-images";
+import { createAdminGown, publishAdminGown } from "@/server/services/admin-gowns";
 import type { CataloguePage } from "@/server/services/catalogue";
 import {
   afterCatalogueMutation,
   CatalogueCache,
+  catalogueCache,
   parseCatalogueCacheQuery,
   toPublicCatalogueCacheValue,
 } from "@/server/services/catalogueCache";
@@ -21,7 +38,90 @@ function value(total = 1) {
   return toPublicCatalogueCacheValue(page);
 }
 
+beforeAll(async () => {
+  await sql`
+    INSERT INTO staff_users (id, name, email, password_hash, is_active)
+    VALUES (${staffId}, 'Cache Test', ${`cache-${staffId}@kleibridal.test`}, 'not-used', true)
+  `;
+  actor = {
+    sessionId: randomUUID(),
+    expiresAt: new Date(Date.now() + 60_000),
+    staff: { id: staffId, name: "Cache Test", email: `cache-${staffId}@kleibridal.test` },
+  };
+});
+
+afterAll(async () => {
+  if (gownIds.length) await sql`DELETE FROM gowns WHERE id = ANY(${gownIds}::uuid[])`;
+  await sql`DELETE FROM audit_log WHERE actor_user_id = ${staffId}`;
+  await sql`DELETE FROM staff_users WHERE id = ${staffId}`;
+  await sql.end();
+});
+
 describe("catalogue cache mutation invalidation", () => {
+  it("wires gown, image, and category owners to post-commit invalidation", async () => {
+    const cache = catalogueCache;
+    cache.clear();
+    const before = cache.epoch;
+    const gown = await createAdminGown(
+      {
+        name: `Cache gown ${randomUUID()}`,
+        price_status: "on_request",
+        price_minor: null,
+        currency: "PHP",
+        is_in_stock: true,
+      },
+      actor,
+      db,
+    );
+    gownIds.push(gown.id);
+    expect(cache.epoch).toBeGreaterThan(before);
+
+    await sql`
+      INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
+      VALUES (${randomUUID()}, ${gown.id}, 0, true, ${`cache/${gown.id}.jpg`}, 10, 10)
+    `;
+    const imageEpoch = cache.epoch;
+    const [image] = await sql`SELECT id FROM gown_images WHERE gown_id = ${gown.id}`;
+    if (!image) throw new Error("test image missing");
+    await updateGownImageAlt(gown.id, image.id as string, "updated", actor, null, db);
+    expect(cache.epoch).toBeGreaterThan(imageEpoch);
+
+    const categoryBefore = cache.epoch;
+    const category = await createCategory(
+      "collections",
+      { name: `Cache category ${randomUUID()}`, confirm: true },
+      actor,
+      null,
+      db,
+    );
+    expect(category.created).toBe(true);
+    expect(cache.epoch).toBeGreaterThan(categoryBefore);
+  });
+
+  it("repeated publish no-op keeps cache epoch unchanged", async () => {
+    const gown = await createAdminGown(
+      {
+        name: `Published cache gown ${randomUUID()}`,
+        price_status: "on_request",
+        price_minor: null,
+        currency: "PHP",
+        is_in_stock: true,
+      },
+      actor,
+      db,
+    );
+    gownIds.push(gown.id);
+    const image = randomUUID();
+    imageIds.push(image);
+    await sql`
+      INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
+      VALUES (${image}, ${gown.id}, 0, true, ${`cache/${image}.jpg`}, 10, 10)
+    `;
+    await publishAdminGown(gown.id, actor, db);
+    const epoch = catalogueCache.epoch;
+    await publishAdminGown(gown.id, actor, db);
+    expect(catalogueCache.epoch).toBe(epoch);
+  });
   it("invalidates only after committed mutation resolves", async () => {
     const cache = new CatalogueCache();
     const key = "catalogue:";

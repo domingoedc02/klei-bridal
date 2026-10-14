@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CataloguePage } from "@/server/services/catalogue";
+import { logger } from "@/server/observability/logger";
 import {
   gownFilterQuerySchema,
   gownFilterQueryString,
@@ -125,7 +126,7 @@ export class CatalogueCache {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly inFlight = new Map<string, Promise<CatalogueCacheValue>>();
   private totalBytes = 0;
-  private epoch = 0;
+  private epochValue = 0;
   private disabled = false;
   private readonly statsState: CacheStats = {
     epochDiscarded: 0,
@@ -137,6 +138,10 @@ export class CatalogueCache {
 
   get stats(): Readonly<CacheStats> {
     return { ...this.statsState };
+  }
+
+  get epoch(): number {
+    return this.epochValue;
   }
 
   get size(): number {
@@ -203,7 +208,7 @@ export class CatalogueCache {
   }
 
   invalidate(options: { disable?: boolean } = {}): void {
-    this.epoch += 1;
+    this.epochValue += 1;
     try {
       this.entries.clear();
       this.totalBytes = 0;
@@ -219,7 +224,7 @@ export class CatalogueCache {
   }
 
   disableAfterInvalidationFailure(): void {
-    this.epoch += 1;
+    this.epochValue += 1;
     this.disabled = true;
     this.statsState.invalidationFailures += 1;
     try {
@@ -231,7 +236,7 @@ export class CatalogueCache {
   }
 
   clear(): void {
-    this.epoch += 1;
+    this.epochValue += 1;
     try {
       this.entries.clear();
       this.totalBytes = 0;
@@ -306,8 +311,12 @@ export async function afterCatalogueMutation<T>(
   if (shouldInvalidate(result)) {
     try {
       invalidateCatalogueCacheAfterCommit();
-    } catch {
+    } catch (error) {
       catalogueCache.disableAfterInvalidationFailure();
+      logger.error(
+        { event: "catalogue_cache_invalidation_failed", err: error },
+        "catalogue_cache_invalidation_failed",
+      );
     }
   }
   return result;
