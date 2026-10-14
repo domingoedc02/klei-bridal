@@ -8,6 +8,9 @@ import {
 } from "@/shared/schemas/gownFilters";
 
 export const CATALOGUE_CACHE_KEY_MAX_BYTES = 512;
+export const CATALOGUE_CACHE_MAX_ENTRIES = 512;
+export const CATALOGUE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+export const CATALOGUE_CACHE_TTL_MS = 60_000;
 
 export type CatalogueVocabulary = {
   silhouettes: readonly string[];
@@ -98,4 +101,183 @@ export function assertPublicCatalogueCacheValue(
   if (typeof value !== "object" || value === null || !publicValues.has(value)) {
     throw new TypeError("catalogue cache accepts only public catalogue DTO");
   }
+}
+
+type CacheEntry = {
+  value: CatalogueCacheValue;
+  serializedBytes: number;
+  expiresAt: number;
+};
+
+type CacheStats = {
+  epochDiscarded: number;
+  evictions: number;
+  hits: number;
+  misses: number;
+};
+
+/**
+ * Process-local bounded cache. Loader failures are not swallowed: callers get
+ * existing database errors, including normal request-ID/503 mapping upstream.
+ */
+export class CatalogueCache {
+  private readonly entries = new Map<string, CacheEntry>();
+  private readonly inFlight = new Map<string, Promise<CatalogueCacheValue>>();
+  private totalBytes = 0;
+  private epoch = 0;
+  private disabled = false;
+  private readonly statsState: CacheStats = {
+    epochDiscarded: 0,
+    evictions: 0,
+    hits: 0,
+    misses: 0,
+  };
+
+  get stats(): Readonly<CacheStats> {
+    return { ...this.statsState };
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  get bytes(): number {
+    return this.totalBytes;
+  }
+
+  get isDisabled(): boolean {
+    return this.disabled;
+  }
+
+  async getOrLoad(
+    key: string | null,
+    loader: () => Promise<CatalogueCacheValue>,
+    now = Date.now(),
+  ): Promise<CatalogueCacheValue> {
+    if (key === null || this.disabled) return loader();
+
+    try {
+      const hit = this.read(key, now);
+      if (hit) {
+        this.statsState.hits += 1;
+        return hit;
+      }
+      this.statsState.misses += 1;
+    } catch {
+      return loader();
+    }
+
+    const existing = this.inFlight.get(key);
+    if (existing) return existing;
+
+    const loadEpoch = this.epoch;
+    const promise = (async () => {
+      const value = await loader();
+      assertPublicCatalogueCacheValue(value);
+      if (loadEpoch !== this.epoch || this.disabled) {
+        this.statsState.epochDiscarded += 1;
+        if (this.disabled) return loader();
+        const freshValue = await loader();
+        assertPublicCatalogueCacheValue(freshValue);
+        try {
+          this.write(key, freshValue, now);
+        } catch {
+          // Cache storage is best effort. Return fresh DB value on cache failure.
+        }
+        return freshValue;
+      }
+      try {
+        this.write(key, value, now);
+      } catch {
+        // Cache storage is best effort. Return fresh DB value on cache failure.
+      }
+      return value;
+    })();
+    this.inFlight.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.inFlight.get(key) === promise) this.inFlight.delete(key);
+    }
+  }
+
+  invalidate(options: { disable?: boolean } = {}): void {
+    this.epoch += 1;
+    try {
+      this.entries.clear();
+      this.totalBytes = 0;
+      if (options.disable) this.disabled = true;
+    } catch {
+      this.disabled = true;
+    }
+  }
+
+  clear(): void {
+    this.epoch += 1;
+    try {
+      this.entries.clear();
+      this.totalBytes = 0;
+      this.disabled = false;
+    } catch {
+      this.disabled = true;
+    }
+  }
+
+  read(key: string, now = Date.now()): CatalogueCacheValue | undefined {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= now) {
+      this.remove(key);
+      return undefined;
+    }
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    return entry.value;
+  }
+
+  write(key: string, value: CatalogueCacheValue, now = Date.now()): boolean {
+    assertPublicCatalogueCacheValue(value);
+    const serialized = JSON.stringify(value);
+    if (typeof serialized !== "string") return false;
+    const serializedBytes = Buffer.byteLength(serialized, "utf8");
+    if (serializedBytes >= CATALOGUE_CACHE_MAX_BYTES) return false;
+
+    this.remove(key);
+    while (
+      this.entries.size >= CATALOGUE_CACHE_MAX_ENTRIES ||
+      this.totalBytes + serializedBytes >= CATALOGUE_CACHE_MAX_BYTES
+    ) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) return false;
+      this.remove(oldest);
+      this.statsState.evictions += 1;
+    }
+    this.entries.set(key, {
+      value,
+      serializedBytes,
+      expiresAt: now + CATALOGUE_CACHE_TTL_MS,
+    });
+    this.totalBytes += serializedBytes;
+    return true;
+  }
+
+  private remove(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    this.totalBytes -= entry.serializedBytes;
+  }
+}
+
+export const catalogueCache = new CatalogueCache();
+
+export function invalidateCatalogueCache(options: { disable?: boolean } = {}): void {
+  catalogueCache.invalidate(options);
+}
+
+export async function getCatalogueCacheValue(
+  key: string | null,
+  loader: () => Promise<CatalogueCacheValue>,
+): Promise<CatalogueCacheValue> {
+  return catalogueCache.getOrLoad(key, loader);
 }
