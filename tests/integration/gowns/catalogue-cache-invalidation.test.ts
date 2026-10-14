@@ -53,6 +53,10 @@ beforeAll(async () => {
 afterAll(async () => {
   if (gownIds.length) await sql`DELETE FROM gowns WHERE id = ANY(${gownIds}::uuid[])`;
   await sql`DELETE FROM audit_log WHERE actor_user_id = ${staffId}`;
+  for (const table of ["silhouettes", "materials", "collections"] as const) {
+    await sql`DELETE FROM ${sql(table)} WHERE created_by = ${staffId}`;
+  }
+  await sql`DELETE FROM sessions WHERE staff_user_id = ${staffId}`;
   await sql`DELETE FROM staff_users WHERE id = ${staffId}`;
   await sql.end();
 });
