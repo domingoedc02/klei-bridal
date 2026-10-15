@@ -68,10 +68,11 @@ jobs:
 
       - name: Replica preflight (fail closed)
         run: |
-          sudo install -d -m 755 /run/kbs
-          sudo rm -f /run/kbs/replica-preflight.json
+          sudo install -d -o "$USER" -g "$USER" -m 755 /run/kbs
+          sudo chown "$USER":"$USER" /run/kbs
+          rm -f /run/kbs/replica-preflight.json
           docker run -d --name kbs-web-preflight --label com.docker.compose.service=kbs-web alpine:3.20 sleep 60
-          trap 'docker rm -f kbs-web-preflight >/dev/null 2>&1 || true; sudo rm -f /run/kbs/replica-preflight.json' EXIT
+          trap 'docker rm -f kbs-web-preflight >/dev/null 2>&1 || true; rm -f /run/kbs/replica-preflight.json' EXIT
           pnpm ops:catalogue-cache preflight
 
       - name: Catalogue cache unit regression
@@ -296,8 +297,9 @@ jobs:
 
       - name: Replica preflight
         run: |
-          sudo install -d -m 755 /run/kbs
-          sudo rm -f /run/kbs/replica-preflight.json
+          sudo install -d -o "$USER" -g "$USER" -m 755 /run/kbs
+          sudo chown "$USER":"$USER" /run/kbs
+          rm -f /run/kbs/replica-preflight.json
           docker run -d --name kbs-web-preflight --label com.docker.compose.service=kbs-web alpine:3.20 sleep 60
-          trap 'docker rm -f kbs-web-preflight >/dev/null 2>&1 || true; sudo rm -f /run/kbs/replica-preflight.json' EXIT
+          trap 'docker rm -f kbs-web-preflight >/dev/null 2>&1 || true; rm -f /run/kbs/replica-preflight.json' EXIT
           pnpm ops:catalogue-cache preflight
