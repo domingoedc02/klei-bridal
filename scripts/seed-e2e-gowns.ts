@@ -65,7 +65,14 @@ async function main() {
       `;
       await sql`
         UPDATE gowns
-        SET status = 'published', is_in_stock = ${gown.isInStock}, hero_image_id = ${imageId}
+        SET
+          name = ${gown.isInStock ? "Celestine" : "Sample — Made-to-order Mermaid"},
+          price_status = ${gown.isInStock ? "priced" : "on_request"},
+          price_minor = ${gown.isInStock ? 125000 : null},
+          currency = 'PHP',
+          status = 'published',
+          is_in_stock = ${gown.isInStock},
+          hero_image_id = ${imageId}
         WHERE id = ${gownId}
       `;
     }
