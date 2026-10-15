@@ -68,7 +68,7 @@ async function main() {
         SET
           name = ${gown.isInStock ? "Celestine" : "Sample — Made-to-order Mermaid"},
           price_status = ${gown.isInStock ? "priced" : "on_request"},
-          price_minor = ${gown.isInStock ? 125000 : null},
+          price_minor = ${gown.isInStock ? 12500000 : null},
           currency = 'PHP',
           status = 'published',
           is_in_stock = ${gown.isInStock},
