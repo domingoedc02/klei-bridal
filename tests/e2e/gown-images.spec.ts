@@ -84,7 +84,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
 
   await page.setContent(html, { waitUntil: "domcontentloaded" });
   const maskStyle =
-    "img { display: block !important; width: 100% !important; height: auto !important; aspect-ratio: 1 / 1 !important; object-fit: cover !important; opacity: 0 !important; }";
+    "img { display: block !important; width: 100% !important; height: calc(100vw - 16px) !important; aspect-ratio: auto !important; object-fit: cover !important; opacity: 0 !important; }";
   const prototypeMask = [page.locator("img")];
   const prototypeCapture = await page.screenshot({
     mask: prototypeMask,
