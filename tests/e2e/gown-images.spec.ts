@@ -83,6 +83,10 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   if (testInfo.project.name.endsWith("dpr2") || testInfo.project.name.endsWith("dpr3")) return;
 
   await page.setContent(html, { waitUntil: "domcontentloaded" });
+  await page.addStyleTag({
+    content:
+      "img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; }",
+  });
   const prototypeMask = [page.locator("img")];
   const prototypeCapture = await page.screenshot({ mask: prototypeMask, maskColor: "#ffffff" });
   await expect(prototypeCapture).toMatchSnapshot(`${fixture}-fixture-${width}.png`, {
