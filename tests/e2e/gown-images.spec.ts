@@ -84,13 +84,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
 
   await page.setContent(html, { waitUntil: "domcontentloaded" });
   const maskStyle =
-    "section[aria-label$='photographs'] li:nth-child(n + 2) { display: none !important; } img { display: block !important; width: 100% !important; height: calc(100vw - 16px) !important; aspect-ratio: auto !important; object-fit: cover !important; opacity: 0 !important; }";
-  const zoomFixtureStyle =
-    fixture === "gown-zoom"
-      ? "body { margin: 0 !important; background: #f4f1eb !important; color: #2b2825 !important; } dialog[open] { box-sizing: border-box !important; width: 100vw !important; height: 100dvh !important; max-width: none !important; max-height: none !important; margin: 0 !important; padding: 0 !important; border: 0 !important; background: #f4f1eb !important; color: #2b2825 !important; overflow: auto !important; } dialog button { position: fixed !important; top: 12px !important; right: 12px !important; min-width: 44px !important; min-height: 44px !important; border: 0 !important; background: #f4f1eb !important; color: #2b2825 !important; padding: 0 16px !important; font: 500 14px/1 Inter, system-ui, sans-serif !important; text-transform: uppercase !important; letter-spacing: 0.08em !important; } dialog p { position: fixed !important; bottom: 12px !important; left: 50% !important; transform: translateX(-50%) !important; margin: 0 !important; padding: 4px 12px !important; background: #f4f1eb !important; font: 400 13px/1.4 Inter, system-ui, sans-serif !important; }"
-      : "";
-  const screenshotStyle = `${maskStyle} ${zoomFixtureStyle}`;
-  await page.addStyleTag({ content: screenshotStyle });
+    "img { display: block !important; width: 100% !important; height: calc(100vw - 16px) !important; aspect-ratio: auto !important; object-fit: cover !important; opacity: 0 !important; }";
   const prototypeMask = [page.locator("img")];
   const prototypeCapture = await page.screenshot({
     mask: prototypeMask,
@@ -119,7 +113,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   const builtCapture = await page.screenshot({
     mask,
     maskColor: "#ffffff",
-    style: screenshotStyle,
+    style: maskStyle,
   });
   const { default: sharp } = await import("sharp");
   const prototypePixels = await sharp(prototypeCapture).raw().toBuffer({ resolveWithObject: true });
