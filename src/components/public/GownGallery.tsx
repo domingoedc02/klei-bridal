@@ -29,8 +29,17 @@ export default function GownGallery({
   }, []);
   const close = useCallback(() => {
     setOpen(null);
-    opener.current?.focus();
   }, []);
+
+  // Restore focus after dialog unmounts; modal focus blocks focusing opener before commit.
+  useEffect(() => {
+    if (open !== null) return;
+    const element = opener.current;
+    if (!element) return;
+    opener.current = null;
+    const frame = window.requestAnimationFrame(() => element.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
 
   // Back gesture closes zoom (decision/images AC-4): one history entry per open.
   useEffect(() => {

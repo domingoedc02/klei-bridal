@@ -82,6 +82,11 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   expect([390, 1280]).toContain(width);
   if (testInfo.project.name.endsWith("dpr2") || testInfo.project.name.endsWith("dpr3")) return;
 
+  await page.setContent(html, { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveScreenshot(`${fixture}-fixture-${width}.png`, {
+    maxDiffPixelRatio: 0.02,
+  });
+
   if (fixture === "gown-detail") {
     await page.goto(`/gowns/${stockSlug}`);
   } else {
