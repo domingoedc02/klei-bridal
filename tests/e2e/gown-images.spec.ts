@@ -101,6 +101,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     await page.goto(`/gowns/${stockSlug}`);
     await page.locator("section[aria-label$='photographs'] img").first().click();
     await expect(page.locator("dialog")).toBeVisible();
+    await expect(page.locator("dialog")).toHaveCSS("opacity", "1");
   }
 
   const image = page
