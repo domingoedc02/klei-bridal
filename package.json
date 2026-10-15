@@ -21,9 +21,11 @@
     "db:generate": "NODE_OPTIONS=--conditions=react-server drizzle-kit generate",
     "db:migrate": "tsx --conditions=react-server scripts/migrate.ts",
     "db:seed": "tsx --conditions=react-server drizzle/seed/index.ts",
+    "db:seed:e2e": "tsx --conditions=react-server scripts/seed-e2e-gowns.ts",
     "images:verify": "tsx --conditions=react-server scripts/verify-images.ts",
     "ops:catalogue-cache": "tsx scripts/catalogueCache.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:images": "playwright test tests/e2e/gown-images.spec.ts --project=phone-dpr1 --project=phone-dpr2 --project=phone-dpr3 --project=laptop-dpr1 --project=laptop-dpr2 --project=laptop-dpr3"
   },
   "dependencies": {
     "@node-rs/argon2": "2.2.1",

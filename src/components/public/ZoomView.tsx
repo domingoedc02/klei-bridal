@@ -5,7 +5,7 @@ import { altFor, srcSet, ZOOM_WIDTH, type GalleryImage } from "@/shared/images";
 import styles from "./GownGallery.module.css";
 
 /** The zoom asset fills the viewport; the browser picks ≤2048px (decision/images §2.1). */
-const ZOOM_SIZES = "100vw";
+const ZOOM_SIZES = "2048px";
 
 /**
  * Tap-to-zoom (gown-zoom). Native modal <dialog>: focus is trapped and

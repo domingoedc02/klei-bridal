@@ -14,18 +14,11 @@ export type GalleryImage = {
   derivatives: DerivativeManifest;
 };
 
-/** Derivatives are served by app/media/[...path]/route.ts (same-origin, immutable). */
 export const MEDIA_PREFIX = "/media/";
-/** decision/images §2.1 amendment: zoom ceiling is the 2048px variant. */
 export const ZOOM_WIDTH = 2048;
 
 type Format = "avif" | "webp" | "jpeg";
 
-/**
- * `srcset` for one format. Variants are encoded `withoutEnlargement`, so a
- * width above the original is really the original width: the descriptor is
- * clamped and duplicates dropped, so the browser never trusts a lie.
- */
 export function srcSet(
   image: Pick<GalleryImage, "derivatives" | "width">,
   format: Format,
@@ -46,7 +39,6 @@ export function srcSet(
     .join(", ");
 }
 
-/** The single largest variant ≤ maxWidth in a format, for `src` fallbacks and no-JS zoom links. */
 export function largest(
   image: Pick<GalleryImage, "derivatives">,
   format: Format,
@@ -59,7 +51,33 @@ export function largest(
   return w === undefined ? undefined : `${MEDIA_PREFIX}${image.derivatives[String(w)]![format]}`;
 }
 
-/** decision/images §6: caption is alt text; generated fallback so an upload is never blocked. */
+export function derivativeLongestEdge(
+  image: Pick<GalleryImage, "derivatives">,
+  format: Format,
+  maxWidth = ZOOM_WIDTH,
+): number | undefined {
+  const widths = Object.entries(image.derivatives)
+    .map(([width, formats]) => ({ width: Number(width), path: formats?.[format] }))
+    .filter(({ width, path }) => Number.isInteger(width) && width > 0 && width <= maxWidth && path)
+    .map(({ width }) => width);
+  return widths.length ? Math.max(...widths) : undefined;
+}
+
+/** Resolve a content-addressed derivative URL back to manifest width metadata. */
+export function derivativeWidthForPath(
+  image: Pick<GalleryImage, "derivatives">,
+  format: Format,
+  path: string,
+  maxWidth = ZOOM_WIDTH,
+): number | undefined {
+  return Object.entries(image.derivatives)
+    .map(([width, formats]) => ({ width: Number(width), path: formats?.[format] }))
+    .find(
+      ({ width, path: candidate }) =>
+        Number.isInteger(width) && width > 0 && width <= maxWidth && candidate === path,
+    )?.width;
+}
+
 export function altFor(
   image: Pick<GalleryImage, "altText">,
   gownName: string,
@@ -70,7 +88,6 @@ export function altFor(
   return alt ? alt : `${gownName} — photograph ${index + 1} of ${total}`;
 }
 
-/** Hero first (the one `is_hero` row, else the first), rest in given sort order. */
 export function heroFirst<T extends Pick<GalleryImage, "isHero">>(images: T[]): T[] {
   const i = images.findIndex((img) => img.isHero);
   return i <= 0 ? images : [images[i]!, ...images.slice(0, i), ...images.slice(i + 1)];
