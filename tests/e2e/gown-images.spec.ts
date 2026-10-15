@@ -70,6 +70,55 @@ async function expectNoCspViolations(page: Page) {
 
 type PrototypeScreen = "gown-detail" | "gown-zoom";
 
+async function layoutDiagnostics(page: Page) {
+  return page.evaluate(() => {
+    const properties = [
+      "display",
+      "position",
+      "boxSizing",
+      "margin",
+      "padding",
+      "border",
+      "backgroundColor",
+      "color",
+      "font",
+      "lineHeight",
+      "opacity",
+      "overflow",
+    ] as const;
+    return {
+      viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+      document: {
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        clientWidth: document.documentElement.clientWidth,
+        clientHeight: document.documentElement.clientHeight,
+      },
+      elements: [...document.querySelectorAll("body *:not(img)")].map((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return {
+          tag: node.tagName.toLowerCase(),
+          text: node.textContent?.trim().replace(/\\s+/g, " ").slice(0, 80) ?? "",
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          style: Object.fromEntries(properties.map((property) => [property, style[property]])),
+        };
+      }),
+    };
+  });
+}
+
+async function attachLayoutDiagnostics(
+  testInfo: TestInfo,
+  name: string,
+  diagnostics: Awaited<ReturnType<typeof layoutDiagnostics>>,
+) {
+  await testInfo.attach(name, {
+    body: Buffer.from(JSON.stringify(diagnostics, null, 2)),
+    contentType: "application/json",
+  });
+}
+
 async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, testInfo: TestInfo) {
   const html = await readFile(`tests/e2e/fixtures/kbs-36/${fixture}.html`, "utf8");
   expect(html).not.toMatch(/<script\b|\son[a-z]+\s*=|fonts\.googleapis\.com|<link[^>]+https:\/\//i);
@@ -91,6 +140,11 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     maskColor: "#ffffff",
     style: maskStyle,
   });
+  await attachLayoutDiagnostics(
+    testInfo,
+    `${fixture}-fixture-layout`,
+    await layoutDiagnostics(page),
+  );
   await expect(prototypeCapture).toMatchSnapshot(`${fixture}-fixture-${width}.png`, {
     maxDiffPixelRatio: 0.02,
   });
@@ -116,6 +170,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     maskColor: "#ffffff",
     style: maskStyle,
   });
+  await attachLayoutDiagnostics(testInfo, `${fixture}-built-layout`, await layoutDiagnostics(page));
   const { default: sharp } = await import("sharp");
   const prototypePixels = await sharp(prototypeCapture).raw().toBuffer({ resolveWithObject: true });
   const builtPixels = await sharp(builtCapture).raw().toBuffer({ resolveWithObject: true });
