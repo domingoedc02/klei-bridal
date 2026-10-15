@@ -29,7 +29,6 @@ env:
   # Deliberately a different inbox from STUDIO_ENQUIRY_EMAIL — alerts and
   # brides' enquiries must never share one.
   ALERT_EMAIL: ci-alerts@example.invalid
-  CI_REPLICA_PREFLIGHT: "false"
 
 jobs:
   lint-typecheck-test:
@@ -294,5 +293,4 @@ jobs:
         run: pnpm images:verify
 
       - name: Replica preflight
-        if: ${{ env.CI_REPLICA_PREFLIGHT == 'true' }}
         run: pnpm ops:catalogue-cache preflight

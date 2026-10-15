@@ -7,6 +7,7 @@ import type { CatalogueCacheValue } from "../../src/server/services/catalogueCac
 import {
   assertPublicCatalogueCacheValue,
   evaluateReplicaPreflight,
+  installCatalogueCacheOperator,
   afterCatalogueMutation,
   CATALOGUE_CACHE_MAX_BYTES,
   CatalogueCache,
@@ -19,20 +20,48 @@ import {
 } from "../../src/server/services/catalogueCache";
 
 describe("catalogue cache replica preflight", () => {
-  it.each([
-    [{ count: 1, source: "dokploy" as const }, true, "exactly_one"],
-    [{ count: 0, source: "dokploy" as const }, false, "not_exactly_one"],
-    [{ count: 2, source: "dokploy" as const }, false, "not_exactly_one"],
-    [{ count: null, source: "unknown" as const }, false, "unknown"],
-    [{ count: null, source: "dokploy" as const }, false, "unknown"],
-  ])("returns bounded evidence for %j", (fact, enabled, reason) => {
-    expect(evaluateReplicaPreflight(fact)).toMatchObject({ count: fact.count, enabled, reason });
+  it("ignores spoofable environment replica counts at startup", () => {
+    const previous = process.env.KBS_REPLICA_COUNT;
+    process.env.KBS_REPLICA_COUNT = "1";
+    try {
+      expect(installCatalogueCacheOperator()).toMatchObject({
+        count: null,
+        enabled: false,
+        reason: "unknown",
+        verified: false,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.KBS_REPLICA_COUNT;
+      else process.env.KBS_REPLICA_COUNT = previous;
+    }
+  });
+
+  it("enables startup only for verified exactly-one fact", () => {
+    expect(
+      installCatalogueCacheOperator({ count: 1, source: "dokploy", verified: true }),
+    ).toMatchObject({ count: 1, enabled: true, reason: "exactly_one", verified: true });
   });
 
   it.each([
-    { count: 0, source: "dokploy" as const },
-    { count: 2, source: "dokploy" as const },
-    { count: null, source: "unknown" as const },
+    [{ count: 1, source: "dokploy" as const, verified: true }, true, "exactly_one"],
+    [{ count: 0, source: "dokploy" as const, verified: true }, false, "not_exactly_one"],
+    [{ count: 2, source: "dokploy" as const, verified: true }, false, "not_exactly_one"],
+    [{ count: null, source: "unknown" as const, verified: false }, false, "unknown"],
+    [{ count: null, source: "dokploy" as const, verified: false }, false, "unknown"],
+    [{ count: 1, source: "dokploy" as const, verified: false }, false, "unknown"],
+  ])("returns bounded evidence for %j", (fact, enabled, reason) => {
+    expect(evaluateReplicaPreflight(fact)).toMatchObject({
+      count: fact.verified ? fact.count : null,
+      enabled,
+      reason,
+    });
+  });
+
+  it.each([
+    { count: 0, source: "dokploy" as const, verified: true },
+    { count: 2, source: "dokploy" as const, verified: true },
+    { count: null, source: "unknown" as const, verified: false },
+    { count: 1, source: "dokploy" as const, verified: false },
   ])("fails closed for %j", (fact) => {
     const cache = new CatalogueCache();
     const page: CataloguePage = {

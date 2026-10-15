@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { CataloguePage } from "@/server/services/catalogue";
+import { readFileSync } from "node:fs";
+
 import { logger } from "@/server/observability/logger";
 import {
   gownFilterQuerySchema,
@@ -122,6 +124,8 @@ export type CatalogueCacheStats = {
 export type ReplicaPreflight = {
   count: number | null;
   source: "dokploy" | "unknown";
+  /** True only when mandatory Dokploy preflight supplied this fact. */
+  verified: boolean;
 };
 
 export type ReplicaPreflightEvidence = ReplicaPreflight & {
@@ -130,7 +134,7 @@ export type ReplicaPreflightEvidence = ReplicaPreflight & {
 };
 
 export function evaluateReplicaPreflight(fact: ReplicaPreflight): ReplicaPreflightEvidence {
-  if (fact.source !== "dokploy" || fact.count === null) {
+  if (!fact.verified || fact.source !== "dokploy" || fact.count === null) {
     return { ...fact, count: null, enabled: false, reason: "unknown" };
   }
   if (fact.count !== 1) {
@@ -330,18 +334,38 @@ export class CatalogueCache {
 
 export const catalogueCache = new CatalogueCache();
 
-function startupReplicaFact(): ReplicaPreflight {
-  const raw = process.env.KBS_REPLICA_COUNT;
-  if (raw === undefined || !/^\d+$/.test(raw)) {
-    return { count: null, source: "unknown" };
+/**
+ * Startup receives verified preflight facts from the deploy/runtime boundary.
+ * Environment variables are deliberately never accepted as replica evidence.
+ */
+let operatorInstalled = false;
+const REPLICA_PREFLIGHT_FILE = "/run/kbs/replica-preflight.json";
+
+function readVerifiedReplicaPreflight(): ReplicaPreflight {
+  const path = REPLICA_PREFLIGHT_FILE;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("count" in parsed) ||
+      !("source" in parsed) ||
+      !("verified" in parsed) ||
+      parsed.source !== "dokploy" ||
+      parsed.verified !== true ||
+      (typeof parsed.count !== "number" && parsed.count !== null) ||
+      (typeof parsed.count === "number" && (!Number.isInteger(parsed.count) || parsed.count < 0))
+    ) {
+      return { count: null, source: "unknown", verified: false };
+    }
+    return parsed as ReplicaPreflight;
+  } catch {
+    return { count: null, source: "unknown", verified: false };
   }
-  return { count: Number(raw), source: "dokploy" };
 }
 
-let operatorInstalled = false;
-
 export function installCatalogueCacheOperator(
-  fact: ReplicaPreflight = startupReplicaFact(),
+  fact: ReplicaPreflight = readVerifiedReplicaPreflight(),
 ): ReplicaPreflightEvidence {
   const evidence = evaluateReplicaPreflight(fact);
   if (!evidence.enabled) {
