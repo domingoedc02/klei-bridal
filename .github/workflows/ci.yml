@@ -146,6 +146,7 @@ jobs:
   e2e:
     name: E2E (phone 390 + laptop 1280)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: lint-typecheck-test
     services:
       postgres:
