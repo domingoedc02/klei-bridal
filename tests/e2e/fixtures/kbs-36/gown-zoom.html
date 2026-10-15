@@ -15,9 +15,11 @@
         color: var(--ink);
       }
       main > a {
-        visibility: hidden;
+        display: none;
       }
       dialog[open] {
+        position: fixed;
+        inset: 0;
         box-sizing: border-box;
         width: 100vw;
         height: 100dvh;
