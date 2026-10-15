@@ -18,8 +18,12 @@ NET=kbs-ci-net-$ID
 VOL=kbs-media-ci-$ID
 PG=kbs-ci-pg-$ID
 VK=kbs-ci-vk-$ID
+PREFLIGHT_DIR=$(mktemp -d)
+PREFLIGHT_FILE=$PREFLIGHT_DIR/replica-preflight.json
 
 cleanup() {
+  rm -rf "$PREFLIGHT_DIR"
+
   docker ps -aq --filter "name=kbs-ci-.*-$ID" | xargs -r docker rm -f >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   docker volume rm "$VOL" >/dev/null 2>&1 || true
@@ -60,10 +64,14 @@ migrate() { docker run --rm --network "$NET" "${ENV[@]}" "$MIG" node_modules/.bi
 migrate | tail -1
 migrate | tail -1 | grep -q "Already up to date" || fail "second migrate run was not a no-op"
 
-# Boot one "deploy" of the runtime image on the shared volume; wait for healthy.
+echo "== 3. verified replica handoff + two deploys, one volume"
+printf '%s\n' '{"count":1,"source":"dokploy","verified":true}' > "$PREFLIGHT_FILE"
 deploy() {
   local name=kbs-ci-web$1-$ID status
-  docker run -d --name "$name" --network "$NET" -v "$VOL:/data/media" "${ENV[@]}" "$IMG" >/dev/null
+  docker run -d --name "$name" --network "$NET" \
+    -v "$VOL:/data/media" \
+    -v "$PREFLIGHT_FILE:/run/kbs/replica-preflight.json:ro" \
+    "${ENV[@]}" "$IMG" >/dev/null
   docker exec "$name" test -s /app/src/server/auth/data/common-passwords.txt.gz || {
     docker logs "$name" >&2
     fail "common password list missing from runtime image"
@@ -76,8 +84,6 @@ deploy() {
   done
   docker logs "$name" >&2; fail "deploy $1 never became healthy"
 }
-
-echo "== 3. two deploys, one volume"
 deploy 1
 docker exec kbs-ci-web1-$ID sh -c 'echo derivative > /data/media/derivatives/ci-probe.avif'
 docker rm -f kbs-ci-web1-$ID >/dev/null

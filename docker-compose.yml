@@ -59,8 +59,9 @@ services:
       MAIL_SENDING_DOMAIN: kleibridal.com
       STUDIO_ENQUIRY_EMAIL: studio@kleibridal.com
       MAIL_DRY_RUN: "true"
-    # Same mount point Dokploy uses for the production named volume.
+    # Preflight evidence is host-owned and read-only inside runtime, matching Dokploy.
     volumes:
+      - /run/kbs/replica-preflight.json:/run/kbs/replica-preflight.json:ro
       - kbs-media:/data/media
 
 volumes:

@@ -341,8 +341,7 @@ export const catalogueCache = new CatalogueCache();
 let operatorInstalled = false;
 const REPLICA_PREFLIGHT_FILE = "/run/kbs/replica-preflight.json";
 
-function readVerifiedReplicaPreflight(): ReplicaPreflight {
-  const path = REPLICA_PREFLIGHT_FILE;
+export function readVerifiedReplicaPreflight(path = REPLICA_PREFLIGHT_FILE): ReplicaPreflight {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (

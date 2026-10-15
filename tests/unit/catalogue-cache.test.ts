@@ -1,3 +1,7 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { logger } from "@/server/observability/logger";
@@ -8,6 +12,7 @@ import {
   assertPublicCatalogueCacheValue,
   evaluateReplicaPreflight,
   installCatalogueCacheOperator,
+  readVerifiedReplicaPreflight,
   afterCatalogueMutation,
   CATALOGUE_CACHE_MAX_BYTES,
   CatalogueCache,
@@ -36,10 +41,21 @@ describe("catalogue cache replica preflight", () => {
     }
   });
 
-  it("enables startup only for verified exactly-one fact", () => {
-    expect(
-      installCatalogueCacheOperator({ count: 1, source: "dokploy", verified: true }),
-    ).toMatchObject({ count: 1, enabled: true, reason: "exactly_one", verified: true });
+  it("enables actual startup handoff only for verified exactly-one fact", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kbs-preflight-"));
+    const path = join(directory, "replica-preflight.json");
+    writeFileSync(path, JSON.stringify({ count: 1, source: "dokploy", verified: true }));
+    expect(readVerifiedReplicaPreflight(path)).toEqual({
+      count: 1,
+      source: "dokploy",
+      verified: true,
+    });
+    expect(installCatalogueCacheOperator(readVerifiedReplicaPreflight(path))).toMatchObject({
+      count: 1,
+      enabled: true,
+      reason: "exactly_one",
+      verified: true,
+    });
   });
 
   it.each([
