@@ -110,7 +110,7 @@ type CacheEntry = {
   expiresAt: number;
 };
 
-type CacheStats = {
+export type CatalogueCacheStats = {
   epochDiscarded: number;
   evictions: number;
   hits: number;
@@ -149,7 +149,7 @@ export class CatalogueCache {
   private totalBytes = 0;
   private epochValue = 0;
   private disabled = false;
-  private readonly statsState: CacheStats = {
+  private readonly statsState: CatalogueCacheStats = {
     epochDiscarded: 0,
     evictions: 0,
     hits: 0,
@@ -158,7 +158,7 @@ export class CatalogueCache {
     replicaPreflightFailures: 0,
   };
 
-  get stats(): Readonly<CacheStats> {
+  get stats(): Readonly<CatalogueCacheStats> {
     return { ...this.statsState };
   }
 
@@ -338,10 +338,8 @@ function startupReplicaFact(): ReplicaPreflight {
   return { count: Number(raw), source: "dokploy" };
 }
 
-/**
- * Install only bounded, SIGUSR2 operator inspection and fail-closed startup guard.
- * SIGUSR1 remains reserved for Node inspector behavior and is never installed.
- */
+let operatorInstalled = false;
+
 export function installCatalogueCacheOperator(
   fact: ReplicaPreflight = startupReplicaFact(),
 ): ReplicaPreflightEvidence {
@@ -358,21 +356,21 @@ export function installCatalogueCacheOperator(
       "catalogue_cache_disabled_replica_preflight",
     );
   }
-
-  if (process.env.NEXT_RUNTIME === "nodejs") {
-    process.on("SIGUSR2", () => {
-      logger.info(
-        {
-          event: "catalogue_cache_inspect",
-          enabled: !catalogueCache.isDisabled,
-          count: catalogueCache.size,
-          bytes: catalogueCache.bytes,
-          epoch: catalogueCache.epoch,
-        },
-        "catalogue_cache_inspect",
-      );
-    });
-  }
+  if (operatorInstalled || typeof process.on !== "function") return evidence;
+  operatorInstalled = true;
+  process.on("SIGUSR2", () => {
+    logger.info(
+      {
+        event: "catalogue_cache_inspect",
+        epoch: catalogueCache.epoch,
+        entries: catalogueCache.size,
+        bytes: catalogueCache.bytes,
+        disabled: catalogueCache.isDisabled,
+        stats: catalogueCache.stats,
+      },
+      "catalogue_cache_inspect",
+    );
+  });
   return evidence;
 }
 

@@ -29,6 +29,7 @@ env:
   # Deliberately a different inbox from STUDIO_ENQUIRY_EMAIL — alerts and
   # brides' enquiries must never share one.
   ALERT_EMAIL: ci-alerts@example.invalid
+  CI_REPLICA_PREFLIGHT: "false"
 
 jobs:
   lint-typecheck-test:
@@ -36,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Version comes from package.json "packageManager"; a second one here
       # fails setup with "Multiple versions of pnpm specified".
@@ -53,13 +56,16 @@ jobs:
         run: pnpm lint
 
       - name: Format check
-        run: pnpm format:check
+        run: pnpm format --check
 
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Unit tests
-        run: pnpm test
+        run: pnpm test -- --run
+
+      - name: Scoped catalogue public-header check
+        run: pnpm ops:catalogue-cache headers
 
       - name: Replica preflight (fail closed)
         run: |
@@ -107,6 +113,8 @@ jobs:
           --health-retries=10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Version comes from package.json "packageManager" (see the job above).
       - uses: pnpm/action-setup@v4
@@ -162,6 +170,8 @@ jobs:
           --health-retries=10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Version comes from package.json "packageManager" (see the first job).
       - uses: pnpm/action-setup@v4
@@ -203,11 +213,55 @@ jobs:
   docker-build:
     name: Docker build + container smoke
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: klei
+          POSTGRES_PASSWORD: klei_ci_pw
+          POSTGRES_DB: klei_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U klei -d klei_ci"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
     # Verification only: CI never pushes or deploys this image. Dokploy builds
     # the same Dockerfile on the VPS. The job gets no secrets; the build needs
     # none, and the smoke runs on the dummy values in scripts/ci-docker-smoke.sh.
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare image manifest database
+        env:
+          DATABASE_URL: postgresql://klei:klei_ci_pw@localhost:5432/klei_ci
+          REDIS_URL: redis://localhost:6379
+          SESSION_SECRET: ci-only-session-secret-not-a-real-secret-00
+          SITE_URL: http://localhost:3000
+          NEXT_PUBLIC_SITE_URL: http://localhost:3000
+          MAIL_PROVIDER_API_KEY: ci-dummy-key
+          MAIL_FROM_ADDRESS: enquiries@kleibridal.com
+          MAIL_SENDING_DOMAIN: kleibridal.com
+          STUDIO_ENQUIRY_EMAIL: studio@kleibridal.com
+          MAIL_DRY_RUN: "true"
+          IMAGE_ORIGINALS_PATH: /data/media/originals
+          IMAGE_CACHE_PATH: /data/media/derivatives
+        run: pnpm db:migrate
 
       # NEXT_PUBLIC_SITE_URL is the only build arg: it is inlined into the
       # client bundle, so Dokploy must set it to the live origin. Here it is
@@ -222,3 +276,23 @@ jobs:
 
       - name: Container smoke (config, migrations, two deploys on one volume, missing-var exit)
         run: scripts/ci-docker-smoke.sh kbs-web:ci kbs-migrate:ci
+
+      - name: Image manifest verification
+        env:
+          DATABASE_URL: postgresql://klei:klei_ci_pw@localhost:5432/klei_ci
+          REDIS_URL: redis://localhost:6379
+          SESSION_SECRET: ci-only-session-secret-not-a-real-secret-00
+          SITE_URL: http://localhost:3000
+          NEXT_PUBLIC_SITE_URL: http://localhost:3000
+          MAIL_PROVIDER_API_KEY: ci-dummy-key
+          MAIL_FROM_ADDRESS: enquiries@kleibridal.com
+          MAIL_SENDING_DOMAIN: kleibridal.com
+          STUDIO_ENQUIRY_EMAIL: studio@kleibridal.com
+          MAIL_DRY_RUN: "true"
+          IMAGE_ORIGINALS_PATH: /data/media/originals
+          IMAGE_CACHE_PATH: /data/media/derivatives
+        run: pnpm images:verify
+
+      - name: Replica preflight
+        if: ${{ env.CI_REPLICA_PREFLIGHT == 'true' }}
+        run: pnpm ops:catalogue-cache preflight

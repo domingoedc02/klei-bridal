@@ -36,10 +36,12 @@ services:
       timeout: 5s
       retries: 10
 
-  web:
+  kbs-web:
     profiles: ["container"]
     build: .
     image: kbs-web
+    labels:
+      com.docker.compose.service: kbs-web
     depends_on:
       postgres: { condition: service_healthy }
       valkey: { condition: service_healthy }
