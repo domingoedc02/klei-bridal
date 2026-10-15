@@ -37,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Version comes from package.json "packageManager"; a second one here
       # fails setup with "Multiple versions of pnpm specified".
@@ -105,6 +107,8 @@ jobs:
           --health-retries=10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Version comes from package.json "packageManager" (see the job above).
       - uses: pnpm/action-setup@v4
@@ -160,6 +164,8 @@ jobs:
           --health-retries=10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Version comes from package.json "packageManager" (see the first job).
       - uses: pnpm/action-setup@v4
@@ -220,6 +226,8 @@ jobs:
     # none, and the smoke runs on the dummy values in scripts/ci-docker-smoke.sh.
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
