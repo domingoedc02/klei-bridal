@@ -229,14 +229,14 @@ test.describe("gown gallery and zoom image contract", () => {
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(gownUrl);
-    await expect(hero).toBeFocused();
+    await expect(trigger).toBeFocused();
 
     await trigger.click();
     await expect(dialog).toBeVisible();
     await page.goBack();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(gownUrl);
-    await expect(hero).toBeFocused();
+    await expect(trigger).toBeFocused();
     await expectNoCspViolations(page);
   });
 

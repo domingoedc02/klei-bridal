@@ -56,7 +56,7 @@ export default defineConfig({
     command:
       `cp -R public .next/standalone/ && cp -R .next/static .next/standalone/.next/ && ` +
       `mkdir -p .next/standalone/.data/images && ` +
-      `cp -R .data/images/derivatives .next/standalone/.data/images/derivatives && ` +
+      `cp -R .data/images/derivatives/. .next/standalone/.data/images/derivatives/ && ` +
       `IMAGE_CACHE_PATH=${resolve(".next/standalone/.data/images/derivatives")} ` +
       `HOSTNAME=127.0.0.1 PORT=${PORT} node .next/standalone/server.js`,
     url: baseURL,

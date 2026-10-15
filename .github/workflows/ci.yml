@@ -206,6 +206,20 @@ jobs:
       - name: Verify image derivatives before E2E
         run: pnpm images:verify
 
+      - name: Prove missing derivative check fails closed
+        run: |
+          set -euo pipefail
+          probe="${RUNNER_TEMP}/kbs-missing-derivative-probe"
+          cp -R "$IMAGE_CACHE_PATH" "$probe"
+          first="$(find "$probe" -type f -print -quit)"
+          test -n "$first"
+          rm "$first"
+          set +e
+          IMAGE_CACHE_PATH="$probe" pnpm images:verify
+          status=$?
+          set -e
+          test "$status" -ne 0
+
       - name: E2E tests — six-project image matrix
         run: pnpm test:e2e:images
 
