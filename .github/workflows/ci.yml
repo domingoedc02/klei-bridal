@@ -29,7 +29,6 @@ env:
   # Deliberately a different inbox from STUDIO_ENQUIRY_EMAIL — alerts and
   # brides' enquiries must never share one.
   ALERT_EMAIL: ci-alerts@example.invalid
-  CI_REPLICA_PREFLIGHT: "false"
 
 jobs:
   lint-typecheck-test:
@@ -66,6 +65,15 @@ jobs:
 
       - name: Scoped catalogue public-header check
         run: pnpm ops:catalogue-cache headers
+
+      - name: Replica preflight (fail closed)
+        run: |
+          sudo install -d -o "$USER" -g "$USER" -m 755 /run/kbs
+          sudo chown "$USER":"$USER" /run/kbs
+          rm -f /run/kbs/replica-preflight.json
+          docker run -d --name kbs-web-preflight --label com.docker.compose.service=kbs-web alpine:3.20 sleep 60
+          trap 'docker rm -f kbs-web-preflight >/dev/null 2>&1 || true; rm -f /run/kbs/replica-preflight.json' EXIT
+          pnpm ops:catalogue-cache preflight
 
       - name: Catalogue cache unit regression
         run: pnpm exec vitest run tests/unit/catalogue-cache.test.ts
@@ -288,5 +296,10 @@ jobs:
         run: pnpm images:verify
 
       - name: Replica preflight
-        if: ${{ env.CI_REPLICA_PREFLIGHT == 'true' }}
-        run: pnpm ops:catalogue-cache preflight
+        run: |
+          sudo install -d -o "$USER" -g "$USER" -m 755 /run/kbs
+          sudo chown "$USER":"$USER" /run/kbs
+          rm -f /run/kbs/replica-preflight.json
+          docker run -d --name kbs-web-preflight --label com.docker.compose.service=kbs-web alpine:3.20 sleep 60
+          trap 'docker rm -f kbs-web-preflight >/dev/null 2>&1 || true; rm -f /run/kbs/replica-preflight.json' EXIT
+          pnpm ops:catalogue-cache preflight

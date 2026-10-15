@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { CataloguePage } from "@/server/services/catalogue";
+import { readFileSync } from "node:fs";
+
 import { logger } from "@/server/observability/logger";
 import {
   gownFilterQuerySchema,
@@ -116,7 +118,30 @@ export type CatalogueCacheStats = {
   hits: number;
   misses: number;
   invalidationFailures: number;
+  replicaPreflightFailures: number;
 };
+
+export type ReplicaPreflight = {
+  count: number | null;
+  source: "dokploy" | "unknown";
+  /** True only when mandatory Dokploy preflight supplied this fact. */
+  verified: boolean;
+};
+
+export type ReplicaPreflightEvidence = ReplicaPreflight & {
+  enabled: boolean;
+  reason: "exactly_one" | "unknown" | "not_exactly_one";
+};
+
+export function evaluateReplicaPreflight(fact: ReplicaPreflight): ReplicaPreflightEvidence {
+  if (!fact.verified || fact.source !== "dokploy" || fact.count === null) {
+    return { ...fact, count: null, enabled: false, reason: "unknown" };
+  }
+  if (fact.count !== 1) {
+    return { ...fact, enabled: false, reason: "not_exactly_one" };
+  }
+  return { ...fact, enabled: true, reason: "exactly_one" };
+}
 
 /**
  * Process-local bounded cache. Loader failures are not swallowed: callers get
@@ -134,6 +159,7 @@ export class CatalogueCache {
     hits: 0,
     misses: 0,
     invalidationFailures: 0,
+    replicaPreflightFailures: 0,
   };
 
   get stats(): Readonly<CatalogueCacheStats> {
@@ -235,6 +261,19 @@ export class CatalogueCache {
     }
   }
 
+  enforceReplicaPreflight(evidence: ReplicaPreflightEvidence): void {
+    if (evidence.enabled) return;
+    this.epochValue += 1;
+    this.disabled = true;
+    this.statsState.replicaPreflightFailures += 1;
+    try {
+      this.entries.clear();
+      this.totalBytes = 0;
+    } catch {
+      // Cache remains disabled even if clearing storage fails.
+    }
+  }
+
   clear(): void {
     this.epochValue += 1;
     try {
@@ -295,10 +334,52 @@ export class CatalogueCache {
 
 export const catalogueCache = new CatalogueCache();
 
+/**
+ * Startup receives verified preflight facts from the deploy/runtime boundary.
+ * Environment variables are deliberately never accepted as replica evidence.
+ */
 let operatorInstalled = false;
+const REPLICA_PREFLIGHT_FILE = "/run/kbs/replica-preflight.json";
 
-export function installCatalogueCacheOperator(): void {
-  if (operatorInstalled || typeof process.on !== "function") return;
+export function readVerifiedReplicaPreflight(path = REPLICA_PREFLIGHT_FILE): ReplicaPreflight {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("count" in parsed) ||
+      !("source" in parsed) ||
+      !("verified" in parsed) ||
+      parsed.source !== "dokploy" ||
+      parsed.verified !== true ||
+      (typeof parsed.count !== "number" && parsed.count !== null) ||
+      (typeof parsed.count === "number" && (!Number.isInteger(parsed.count) || parsed.count < 0))
+    ) {
+      return { count: null, source: "unknown", verified: false };
+    }
+    return parsed as ReplicaPreflight;
+  } catch {
+    return { count: null, source: "unknown", verified: false };
+  }
+}
+
+export function installCatalogueCacheOperator(
+  fact: ReplicaPreflight = readVerifiedReplicaPreflight(),
+): ReplicaPreflightEvidence {
+  const evidence = evaluateReplicaPreflight(fact);
+  if (!evidence.enabled) {
+    catalogueCache.enforceReplicaPreflight(evidence);
+    logger.error(
+      {
+        event: "catalogue_cache_replica_preflight_failed",
+        count: evidence.count,
+        reason: evidence.reason,
+        enabled: false,
+      },
+      "catalogue_cache_disabled_replica_preflight",
+    );
+  }
+  if (operatorInstalled || typeof process.on !== "function") return evidence;
   operatorInstalled = true;
   process.on("SIGUSR2", () => {
     logger.info(
@@ -313,6 +394,7 @@ export function installCatalogueCacheOperator(): void {
       "catalogue_cache_inspect",
     );
   });
+  return evidence;
 }
 
 export function invalidateCatalogueCache(options: { disable?: boolean } = {}): void {

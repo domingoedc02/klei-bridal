@@ -81,21 +81,26 @@ hard gate rather than a suggestion.
 
 ## 2. Deploy sequence (every time)
 
-1. Confirm CI is green on the commit being deployed. The GitHub Actions jobs are lint,
+1. Run mandatory replica preflight before startup or traffic swap. Exact command:
+   ```bash
+   pnpm ops:catalogue-cache preflight
+   ```
+   Run from deploy checkout with Docker access. Output must contain `"count":1`, `"enabled":true`, and `"cacheAction":"enabled"`. Any `null`, `0`, or count greater than `1` exits non-zero, records disabled state, and blocks deploy. Do not set `CI_REPLICA_PREFLIGHT=false`; that bypass is forbidden. Unknown or unavailable Docker fact never means one.
+2. Confirm CI is green on the commit being deployed. The GitHub Actions jobs are lint,
    typecheck, unit tests, production build, integration tests, e2e, and the `docker build` +
    container smoke. A red commit never reaches Dokploy.
-2. Confirm any pending migration has been **reviewed as SQL by a second person**
+3. Confirm any pending migration has been **reviewed as SQL by a second person**
    (`AC-OPS-05` — never trigger a deploy carrying an unreviewed migration).
-3. **Apply migrations as an explicit step, BEFORE the deploy** (section 2a). This ordering is
+4. **Apply migrations as an explicit step, BEFORE the deploy** (section 2a). This ordering is
    safe only because of the backward-compatible-migration rule (section 5): the
    still-running previous release must work against the new schema. Never run an implicit
    `drizzle-kit push`, which is forbidden against production (`spec/setup`).
-4. Trigger the Dokploy deploy manually ("Deploy" in the Dokploy UI; auto-deploy is off).
-5. Dokploy swaps the `kbs-web` container; Traefik begins routing to the new one once its
+5. Trigger the Dokploy deploy manually ("Deploy" in the Dokploy UI; auto-deploy is off).
+6. Dokploy swaps the `kbs-web` container; Traefik begins routing to the new one once its
    healthcheck passes.
-6. **Run the persistent-volume check immediately** — section 3 below. This is not optional
+7. **Run the persistent-volume check immediately** — section 3 below. This is not optional
    and not "spot check if you remember."
-7. Smoke-check: homepage, one gown page, `/admin/login`, submit one test enquiry.
+8. Smoke-check: homepage, one gown page, `/admin/login`, submit one test enquiry.
 
 ### 2a. Running migrations (one-off container)
 

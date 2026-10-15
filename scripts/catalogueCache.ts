@@ -4,7 +4,7 @@
  * Run from the host or CI, never expose as an HTTP route.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const SERVICE = "kbs-web";
@@ -36,13 +36,30 @@ function replicaCount(): number | null {
 function preflight(): never {
   const count = replicaCount();
   const enabled = count === 1;
-  const evidence = { event: "catalogue_cache_replica_preflight", count, enabled };
+  if (count === 1) {
+    const preflightFile = "/run/kbs/replica-preflight.json";
+    try {
+      mkdirSync("/run/kbs", { recursive: true });
+      writeFileSync(preflightFile, JSON.stringify({ count, source: "dokploy", verified: true }));
+    } catch {
+      process.stderr.write("catalogue cache preflight evidence unavailable\n");
+      return process.exit(1);
+    }
+  }
+  const reason = count === null ? "unknown" : enabled ? "exactly_one" : "not_exactly_one";
+  const evidence = {
+    event: "catalogue_cache_replica_preflight",
+    count,
+    enabled,
+    reason,
+    cacheAction: enabled ? "enabled" : "disabled",
+  };
   process.stdout.write(`${JSON.stringify(evidence)}\n`);
   if (!enabled) {
     process.stderr.write("catalogue cache disabled: replica count unknown or not exactly one\n");
-    process.exitCode = 1;
+    return process.exit(1);
   }
-  return process.exit(process.exitCode ?? 0);
+  return process.exit(0);
 }
 
 function inspect(container = SERVICE): never {

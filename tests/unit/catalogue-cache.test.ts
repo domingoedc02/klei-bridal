@@ -1,3 +1,7 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { logger } from "@/server/observability/logger";
@@ -6,6 +10,9 @@ import type { CataloguePage } from "../../src/server/services/catalogue";
 import type { CatalogueCacheValue } from "../../src/server/services/catalogueCache";
 import {
   assertPublicCatalogueCacheValue,
+  evaluateReplicaPreflight,
+  installCatalogueCacheOperator,
+  readVerifiedReplicaPreflight,
   afterCatalogueMutation,
   CATALOGUE_CACHE_MAX_BYTES,
   CatalogueCache,
@@ -16,6 +23,79 @@ import {
   resolveCatalogueCacheQuery,
   toPublicCatalogueCacheValue,
 } from "../../src/server/services/catalogueCache";
+
+describe("catalogue cache replica preflight", () => {
+  it("ignores spoofable environment replica counts at startup", () => {
+    const previous = process.env.KBS_REPLICA_COUNT;
+    process.env.KBS_REPLICA_COUNT = "1";
+    try {
+      expect(installCatalogueCacheOperator()).toMatchObject({
+        count: null,
+        enabled: false,
+        reason: "unknown",
+        verified: false,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.KBS_REPLICA_COUNT;
+      else process.env.KBS_REPLICA_COUNT = previous;
+    }
+  });
+
+  it("enables actual startup handoff only for verified exactly-one fact", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kbs-preflight-"));
+    const path = join(directory, "replica-preflight.json");
+    writeFileSync(path, JSON.stringify({ count: 1, source: "dokploy", verified: true }));
+    expect(readVerifiedReplicaPreflight(path)).toEqual({
+      count: 1,
+      source: "dokploy",
+      verified: true,
+    });
+    expect(installCatalogueCacheOperator(readVerifiedReplicaPreflight(path))).toMatchObject({
+      count: 1,
+      enabled: true,
+      reason: "exactly_one",
+      verified: true,
+    });
+  });
+
+  it.each([
+    [{ count: 1, source: "dokploy" as const, verified: true }, true, "exactly_one"],
+    [{ count: 0, source: "dokploy" as const, verified: true }, false, "not_exactly_one"],
+    [{ count: 2, source: "dokploy" as const, verified: true }, false, "not_exactly_one"],
+    [{ count: null, source: "unknown" as const, verified: false }, false, "unknown"],
+    [{ count: null, source: "dokploy" as const, verified: false }, false, "unknown"],
+    [{ count: 1, source: "dokploy" as const, verified: false }, false, "unknown"],
+  ])("returns bounded evidence for %j", (fact, enabled, reason) => {
+    expect(evaluateReplicaPreflight(fact)).toMatchObject({
+      count: fact.verified ? fact.count : null,
+      enabled,
+      reason,
+    });
+  });
+
+  it.each([
+    { count: 0, source: "dokploy" as const, verified: true },
+    { count: 2, source: "dokploy" as const, verified: true },
+    { count: null, source: "unknown" as const, verified: false },
+    { count: 1, source: "dokploy" as const, verified: false },
+  ])("fails closed for %j", (fact) => {
+    const cache = new CatalogueCache();
+    const page: CataloguePage = {
+      canonicalized: false,
+      cards: [],
+      total: 1,
+      page: 1,
+      pageCount: 1,
+      vocabulary: { silhouettes: [], materials: [], collections: [] },
+      query: parseCatalogueCacheQuery({}),
+    };
+    cache.write("catalogue:", toPublicCatalogueCacheValue(page));
+    cache.enforceReplicaPreflight(evaluateReplicaPreflight(fact));
+    expect(cache.isDisabled).toBe(true);
+    expect(cache.read("catalogue:")).toBeUndefined();
+    expect(cache.stats.replicaPreflightFailures).toBe(1);
+  });
+});
 
 describe("catalogue cache query contract", () => {
   const pageFor = (id: number): CataloguePage => ({
