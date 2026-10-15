@@ -29,6 +29,7 @@ env:
   # Deliberately a different inbox from STUDIO_ENQUIRY_EMAIL — alerts and
   # brides' enquiries must never share one.
   ALERT_EMAIL: ci-alerts@example.invalid
+  CI_REPLICA_PREFLIGHT: "false"
 
 jobs:
   lint-typecheck-test:
@@ -53,13 +54,16 @@ jobs:
         run: pnpm lint
 
       - name: Format check
-        run: pnpm format:check
+        run: pnpm format --check
 
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Unit tests
         run: pnpm test
+
+      - name: Scoped catalogue public-header check
+        run: pnpm ops:catalogue-cache headers
 
       - name: Catalogue cache unit regression
         run: pnpm exec vitest run tests/unit/catalogue-cache.test.ts
@@ -216,3 +220,10 @@ jobs:
 
       - name: Container smoke (config, migrations, two deploys on one volume, missing-var exit)
         run: scripts/ci-docker-smoke.sh kbs-web:ci kbs-migrate:ci
+
+      - name: Image manifest verification
+        run: pnpm images:verify
+
+      - name: Replica preflight
+        if: ${{ env.CI_REPLICA_PREFLIGHT == 'true' }}
+        run: pnpm ops:catalogue-cache preflight
