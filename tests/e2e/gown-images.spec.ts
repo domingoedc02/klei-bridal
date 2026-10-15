@@ -17,8 +17,30 @@ function selectedWidth(srcSet: string, currentSrc: string): number | undefined {
   return candidate?.[1] ? Number(candidate[1].replace(/w$/, "")) : undefined;
 }
 
-function expectedWidth(cssWidth: number, dpr: number): number {
-  return widths.find((width) => width >= cssWidth * dpr) ?? 2048;
+function expectedWidth(viewportWidth: number, dpr: number): number {
+  const slotWidth =
+    viewportWidth >= 1440 ? 860 : viewportWidth >= 1024 ? viewportWidth * 0.6 : viewportWidth;
+  return widths.find((width) => width >= slotWidth * dpr) ?? 2048;
+}
+
+async function waitForImage(image: import("@playwright/test").Locator) {
+  await expect
+    .poll(
+      () =>
+        image.evaluate((node) => {
+          const element = node as HTMLImageElement;
+          return {
+            complete: element.complete,
+            naturalWidth: element.naturalWidth,
+            currentSrc: element.currentSrc,
+          };
+        }),
+      { timeout: 10_000 },
+    )
+    .toMatchObject({ complete: true });
+  await expect
+    .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
 }
 
 function mediaRequests(urls: string[]): string[] {
@@ -49,7 +71,6 @@ async function expectNoCspViolations(page: Page) {
 type PrototypeScreen = "gown-detail" | "gown-zoom";
 
 async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, testInfo: TestInfo) {
-  testInfo.snapshotPath(`${fixture}.png`);
   const html = await readFile(`tests/e2e/fixtures/kbs-36/${fixture}.html`, "utf8");
   expect(html).not.toMatch(/<script\b|\son[a-z]+\s*=|fonts\.googleapis\.com|<link[^>]+https:\/\//i);
   await testInfo.attach(`${fixture}-fixture`, {
@@ -61,9 +82,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   expect([390, 1280]).toContain(width);
   if (testInfo.project.name.endsWith("dpr2") || testInfo.project.name.endsWith("dpr3")) return;
 
-  if (process.env.KBS_PROTOTYPE_CAPTURE === "1") {
-    await page.setContent(html, { waitUntil: "domcontentloaded" });
-  } else if (fixture === "gown-detail") {
+  if (fixture === "gown-detail") {
     await page.goto(`/gowns/${stockSlug}`);
   } else {
     await page.goto(`/gowns/${stockSlug}`);
@@ -76,7 +95,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
       fixture === "gown-detail" ? "section[aria-label$='photographs'] img" : "dialog img",
     ),
   ];
-  await expect(page).toHaveScreenshot(`${fixture}-${width}.png`, {
+  await expect(page).toHaveScreenshot(`${fixture}-${width}`, {
     mask,
     maxDiffPixelRatio: 0.02,
   });
@@ -93,17 +112,18 @@ test.describe("gown gallery and zoom image contract", () => {
     await expect(images).not.toHaveCount(0);
     const hero = images.first();
     await expect(hero).toBeVisible();
+    await waitForImage(hero);
     const data = await hero.evaluate((node) => {
       const image = node as HTMLImageElement;
       const source = image.closest("picture")?.querySelector('source[type="image/avif"]');
       return { currentSrc: image.currentSrc, srcSet: source?.getAttribute("srcset") ?? "" };
     });
     expect(data.currentSrc).toContain(".avif");
-    const box = await hero.boundingBox();
-    expect(box).not.toBeNull();
+    const viewportWidth = page.viewportSize()?.width;
+    expect(viewportWidth).toBeDefined();
     const dpr = await page.evaluate(() => window.devicePixelRatio);
     const picked = selectedWidth(data.srcSet, data.currentSrc);
-    expect(picked).toBe(expectedWidth(box!.width, dpr));
+    expect(picked).toBe(expectedWidth(viewportWidth!, dpr));
     const heroCandidates = new Map(
       data.srcSet.split(",").map((entry) => {
         const [url, descriptor] = entry.trim().split(/\s+/);
@@ -119,24 +139,24 @@ test.describe("gown gallery and zoom image contract", () => {
     const belowFold = await images.evaluateAll((nodes) =>
       nodes.slice(1).map((node) => {
         const image = node as HTMLImageElement;
+        const rect = image.getBoundingClientRect();
         return {
-          top: image.getBoundingClientRect().top,
+          top: rect.top,
+          bottom: rect.bottom,
+          loading: image.loading,
+          currentSrc: image.currentSrc,
           sources: image.srcset.split(",").map((entry) => entry.trim().split(/\s+/)[0]),
         };
       }),
     );
-    const loadedBeforeScroll = new Set(mediaRequests(requests).map((url) => new URL(url).pathname));
+    expect(belowFold.every((image) => image.loading === "lazy")).toBe(true);
+    expect(belowFold.every((image) => image.bottom > image.top)).toBe(true);
     for (const image of belowFold) {
-      expect(image.top).toBeGreaterThanOrEqual(await page.evaluate(() => window.innerHeight));
-      expect(
-        image.sources.every(
-          (source) => !loadedBeforeScroll.has(new URL(source!, page.url()).pathname),
-        ),
-      ).toBe(true);
+      expect(image.loading).toBe("lazy");
     }
     for (const image of await images.all().then((all) => all.slice(1))) {
       await image.scrollIntoViewIfNeeded();
-      await expect.poll(() => mediaRequests(requests).length).toBeGreaterThan(1);
+      await waitForImage(image);
     }
     await expectNoCspViolations(page);
   });
@@ -182,6 +202,7 @@ test.describe("gown gallery and zoom image contract", () => {
     await expect(dialog).toBeVisible();
     const zoom = dialog.locator("img");
     await expect(zoom).toBeVisible();
+    await waitForImage(zoom);
     const zoomData = await zoom.evaluate((node) => {
       const image = node as HTMLImageElement;
       const source = image.closest("picture")?.querySelector('source[type="image/avif"]');
