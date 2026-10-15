@@ -4,19 +4,77 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Gown zoom fixture</title>
+    <style>
+      :root {
+        --ink: #2b2825;
+        --page: #f4f1eb;
+      }
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--ink);
+      }
+      main > a {
+        visibility: hidden;
+      }
+      dialog[open] {
+        box-sizing: border-box;
+        width: 100vw;
+        height: 100dvh;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: var(--page);
+        color: var(--ink);
+        overflow: auto;
+      }
+      dialog button {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        min-width: 44px;
+        min-height: 44px;
+        border: 0;
+        padding: 0 16px;
+        background: var(--page);
+        color: var(--ink);
+        font:
+          500 14px/1 Inter,
+          system-ui,
+          sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      dialog p {
+        position: fixed;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        margin: 0;
+        padding: 4px 12px;
+        background: var(--page);
+        font:
+          400 13px/1.4 Inter,
+          system-ui,
+          sans-serif;
+      }
+    </style>
   </head>
   <body>
     <main>
       <a href="/gowns/celestine">Back to gown detail</a>
-      <dialog open aria-label="Celestine, photograph 1 of 1">
+      <dialog open aria-label="Celestine, photograph 1 of 2">
         <button type="button">Close</button>
         <img
           src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-          width="1200"
-          height="1600"
-          alt="Celestine — photograph 1 of 1"
+          style="display: block; width: 100%; height: auto"
+          width="2048"
+          height="2048"
+          alt="Celestine — photograph 1 of 2"
         />
-        <p aria-live="polite">1 / 1</p>
+        <p aria-live="polite">1 / 2</p>
       </dialog>
     </main>
   </body>
