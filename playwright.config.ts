@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import { defineConfig, devices } from "@playwright/test";
 
 // End-to-end tests run against the standalone production server — the same
@@ -49,10 +51,13 @@ export default defineConfig({
     })),
   ],
   webServer: {
-    // The standalone bundle omits static assets; copy them in as the
-    // Dockerfile does, then boot it.
+    // The standalone bundle omits static assets and the external media cache.
+    // Copy both into runtime paths before booting it.
     command:
-      "cp -R public .next/standalone/ && cp -R .next/static .next/standalone/.next/ && " +
+      `cp -R public .next/standalone/ && cp -R .next/static .next/standalone/.next/ && ` +
+      `mkdir -p .next/standalone/.data/images && ` +
+      `cp -R .data/images/derivatives .next/standalone/.data/images/derivatives && ` +
+      `IMAGE_CACHE_PATH=${resolve(".next/standalone/.data/images/derivatives")} ` +
       `HOSTNAME=127.0.0.1 PORT=${PORT} node .next/standalone/server.js`,
     url: baseURL,
     // Same-origin check compares Origin to SITE_URL; real-API specs post
