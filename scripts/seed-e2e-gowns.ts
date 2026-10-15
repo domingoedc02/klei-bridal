@@ -31,8 +31,8 @@ async function main() {
       `;
       if (!rows[0]) throw new Error(`Seed gown missing: ${gown.slug}`);
       const gownId = rows[0].id;
-      const images = await sql<{ id: string }[]>`
-        SELECT id FROM gown_images WHERE gown_id = ${gownId} ORDER BY sort_order LIMIT 1
+      const images = await sql<{ id: string; sort_order: number }[]>`
+        SELECT id, sort_order FROM gown_images WHERE gown_id = ${gownId} ORDER BY sort_order
       `;
       const imageId = images[0]?.id ?? generateId();
       if (!images[0]) {
@@ -49,7 +49,7 @@ async function main() {
           WHERE id = ${imageId}
         `;
       }
-      const detailImageId = `${imageId}-detail`;
+      const detailImageId = images[1]?.id ?? generateId();
       await sql`
         INSERT INTO gown_images
           (id, gown_id, sort_order, is_hero, alt_text, original_path, derivatives, lqip, width, height)
