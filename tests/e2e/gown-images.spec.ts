@@ -83,12 +83,14 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   if (testInfo.project.name.endsWith("dpr2") || testInfo.project.name.endsWith("dpr3")) return;
 
   await page.setContent(html, { waitUntil: "domcontentloaded" });
-  await page.addStyleTag({
-    content:
-      "img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; }",
-  });
+  const maskStyle =
+    "img { display: block !important; width: 100% !important; height: auto !important; aspect-ratio: 1 / 1 !important; object-fit: cover !important; opacity: 0 !important; }";
   const prototypeMask = [page.locator("img")];
-  const prototypeCapture = await page.screenshot({ mask: prototypeMask, maskColor: "#ffffff" });
+  const prototypeCapture = await page.screenshot({
+    mask: prototypeMask,
+    maskColor: "#ffffff",
+    style: maskStyle,
+  });
   await expect(prototypeCapture).toMatchSnapshot(`${fixture}-fixture-${width}.png`, {
     maxDiffPixelRatio: 0.02,
   });
@@ -106,7 +108,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     .first();
   await waitForImage(image);
   const mask = [image];
-  const builtCapture = await page.screenshot({ mask, maskColor: "#ffffff" });
+  const builtCapture = await page.screenshot({ mask, maskColor: "#ffffff", style: maskStyle });
   const { default: sharp } = await import("sharp");
   const prototypePixels = await sharp(prototypeCapture).raw().toBuffer({ resolveWithObject: true });
   const builtPixels = await sharp(builtCapture).raw().toBuffer({ resolveWithObject: true });
