@@ -107,7 +107,9 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     .locator(fixture === "gown-detail" ? "section[aria-label$='photographs'] img" : "dialog img")
     .first();
   await waitForImage(image);
-  const mask = [image];
+  const mask = [
+    fixture === "gown-detail" ? page.locator("section[aria-label$='photographs'] img") : image,
+  ];
   const builtCapture = await page.screenshot({ mask, maskColor: "#ffffff", style: maskStyle });
   const { default: sharp } = await import("sharp");
   const prototypePixels = await sharp(prototypeCapture).raw().toBuffer({ resolveWithObject: true });
