@@ -6,6 +6,7 @@ import type { CataloguePage } from "../../src/server/services/catalogue";
 import type { CatalogueCacheValue } from "../../src/server/services/catalogueCache";
 import {
   assertPublicCatalogueCacheValue,
+  evaluateReplicaPreflight,
   afterCatalogueMutation,
   CATALOGUE_CACHE_MAX_BYTES,
   CatalogueCache,
@@ -16,6 +17,40 @@ import {
   resolveCatalogueCacheQuery,
   toPublicCatalogueCacheValue,
 } from "../../src/server/services/catalogueCache";
+
+describe("catalogue cache replica preflight", () => {
+  it.each([
+    [{ count: 1, source: "dokploy" as const }, true, "exactly_one"],
+    [{ count: 0, source: "dokploy" as const }, false, "not_exactly_one"],
+    [{ count: 2, source: "dokploy" as const }, false, "not_exactly_one"],
+    [{ count: null, source: "unknown" as const }, false, "unknown"],
+    [{ count: null, source: "dokploy" as const }, false, "unknown"],
+  ])("returns bounded evidence for %j", (fact, enabled, reason) => {
+    expect(evaluateReplicaPreflight(fact)).toMatchObject({ count: fact.count, enabled, reason });
+  });
+
+  it.each([
+    { count: 0, source: "dokploy" as const },
+    { count: 2, source: "dokploy" as const },
+    { count: null, source: "unknown" as const },
+  ])("fails closed for %j", (fact) => {
+    const cache = new CatalogueCache();
+    const page: CataloguePage = {
+      canonicalized: false,
+      cards: [],
+      total: 1,
+      page: 1,
+      pageCount: 1,
+      vocabulary: { silhouettes: [], materials: [], collections: [] },
+      query: parseCatalogueCacheQuery({}),
+    };
+    cache.write("catalogue:", toPublicCatalogueCacheValue(page));
+    cache.enforceReplicaPreflight(evaluateReplicaPreflight(fact));
+    expect(cache.isDisabled).toBe(true);
+    expect(cache.read("catalogue:")).toBeUndefined();
+    expect(cache.stats.replicaPreflightFailures).toBe(1);
+  });
+});
 
 describe("catalogue cache query contract", () => {
   const pageFor = (id: number): CataloguePage => ({

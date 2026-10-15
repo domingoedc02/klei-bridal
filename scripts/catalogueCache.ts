@@ -36,13 +36,20 @@ function replicaCount(): number | null {
 function preflight(): never {
   const count = replicaCount();
   const enabled = count === 1;
-  const evidence = { event: "catalogue_cache_replica_preflight", count, enabled };
+  const reason = count === null ? "unknown" : enabled ? "exactly_one" : "not_exactly_one";
+  const evidence = {
+    event: "catalogue_cache_replica_preflight",
+    count,
+    enabled,
+    reason,
+    cacheAction: enabled ? "enabled" : "disabled",
+  };
   process.stdout.write(`${JSON.stringify(evidence)}\n`);
   if (!enabled) {
     process.stderr.write("catalogue cache disabled: replica count unknown or not exactly one\n");
-    process.exitCode = 1;
+    return process.exit(1);
   }
-  return process.exit(process.exitCode ?? 0);
+  return process.exit(0);
 }
 
 function inspect(container = SERVICE): never {

@@ -116,7 +116,28 @@ export type CatalogueCacheStats = {
   hits: number;
   misses: number;
   invalidationFailures: number;
+  replicaPreflightFailures: number;
 };
+
+export type ReplicaPreflight = {
+  count: number | null;
+  source: "dokploy" | "unknown";
+};
+
+export type ReplicaPreflightEvidence = ReplicaPreflight & {
+  enabled: boolean;
+  reason: "exactly_one" | "unknown" | "not_exactly_one";
+};
+
+export function evaluateReplicaPreflight(fact: ReplicaPreflight): ReplicaPreflightEvidence {
+  if (fact.source !== "dokploy" || fact.count === null) {
+    return { ...fact, count: null, enabled: false, reason: "unknown" };
+  }
+  if (fact.count !== 1) {
+    return { ...fact, enabled: false, reason: "not_exactly_one" };
+  }
+  return { ...fact, enabled: true, reason: "exactly_one" };
+}
 
 /**
  * Process-local bounded cache. Loader failures are not swallowed: callers get
@@ -134,6 +155,7 @@ export class CatalogueCache {
     hits: 0,
     misses: 0,
     invalidationFailures: 0,
+    replicaPreflightFailures: 0,
   };
 
   get stats(): Readonly<CatalogueCacheStats> {
@@ -235,6 +257,19 @@ export class CatalogueCache {
     }
   }
 
+  enforceReplicaPreflight(evidence: ReplicaPreflightEvidence): void {
+    if (evidence.enabled) return;
+    this.epochValue += 1;
+    this.disabled = true;
+    this.statsState.replicaPreflightFailures += 1;
+    try {
+      this.entries.clear();
+      this.totalBytes = 0;
+    } catch {
+      // Cache remains disabled even if clearing storage fails.
+    }
+  }
+
   clear(): void {
     this.epochValue += 1;
     try {
@@ -295,10 +330,33 @@ export class CatalogueCache {
 
 export const catalogueCache = new CatalogueCache();
 
+function startupReplicaFact(): ReplicaPreflight {
+  const raw = process.env.KBS_REPLICA_COUNT;
+  if (raw === undefined || !/^\d+$/.test(raw)) {
+    return { count: null, source: "unknown" };
+  }
+  return { count: Number(raw), source: "dokploy" };
+}
+
 let operatorInstalled = false;
 
-export function installCatalogueCacheOperator(): void {
-  if (operatorInstalled || typeof process.on !== "function") return;
+export function installCatalogueCacheOperator(
+  fact: ReplicaPreflight = startupReplicaFact(),
+): ReplicaPreflightEvidence {
+  const evidence = evaluateReplicaPreflight(fact);
+  if (!evidence.enabled) {
+    catalogueCache.enforceReplicaPreflight(evidence);
+    logger.error(
+      {
+        event: "catalogue_cache_replica_preflight_failed",
+        count: evidence.count,
+        reason: evidence.reason,
+        enabled: false,
+      },
+      "catalogue_cache_disabled_replica_preflight",
+    );
+  }
+  if (operatorInstalled || typeof process.on !== "function") return evidence;
   operatorInstalled = true;
   process.on("SIGUSR2", () => {
     logger.info(
@@ -313,6 +371,7 @@ export function installCatalogueCacheOperator(): void {
       "catalogue_cache_inspect",
     );
   });
+  return evidence;
 }
 
 export function invalidateCatalogueCache(options: { disable?: boolean } = {}): void {
