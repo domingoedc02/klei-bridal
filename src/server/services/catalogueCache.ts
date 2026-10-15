@@ -110,7 +110,7 @@ type CacheEntry = {
   expiresAt: number;
 };
 
-type CacheStats = {
+export type CatalogueCacheStats = {
   epochDiscarded: number;
   evictions: number;
   hits: number;
@@ -128,7 +128,7 @@ export class CatalogueCache {
   private totalBytes = 0;
   private epochValue = 0;
   private disabled = false;
-  private readonly statsState: CacheStats = {
+  private readonly statsState: CatalogueCacheStats = {
     epochDiscarded: 0,
     evictions: 0,
     hits: 0,
@@ -136,7 +136,7 @@ export class CatalogueCache {
     invalidationFailures: 0,
   };
 
-  get stats(): Readonly<CacheStats> {
+  get stats(): Readonly<CatalogueCacheStats> {
     return { ...this.statsState };
   }
 
@@ -294,6 +294,26 @@ export class CatalogueCache {
 }
 
 export const catalogueCache = new CatalogueCache();
+
+let operatorInstalled = false;
+
+export function installCatalogueCacheOperator(): void {
+  if (operatorInstalled || typeof process.on !== "function") return;
+  operatorInstalled = true;
+  process.on("SIGUSR2", () => {
+    logger.info(
+      {
+        event: "catalogue_cache_inspect",
+        epoch: catalogueCache.epoch,
+        entries: catalogueCache.size,
+        bytes: catalogueCache.bytes,
+        disabled: catalogueCache.isDisabled,
+        stats: catalogueCache.stats,
+      },
+      "catalogue_cache_inspect",
+    );
+  });
+}
 
 export function invalidateCatalogueCache(options: { disable?: boolean } = {}): void {
   catalogueCache.invalidate(options);
