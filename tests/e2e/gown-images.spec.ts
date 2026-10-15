@@ -95,7 +95,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
       fixture === "gown-detail" ? "section[aria-label$='photographs'] img" : "dialog img",
     ),
   ];
-  await expect(page).toHaveScreenshot(`${fixture}-${width}`, {
+  await expect(page).toHaveScreenshot(`${fixture}-${width}.png`, {
     mask,
     maxDiffPixelRatio: 0.02,
   });
