@@ -21,7 +21,8 @@
     "db:generate": "NODE_OPTIONS=--conditions=react-server drizzle-kit generate",
     "db:migrate": "tsx --conditions=react-server scripts/migrate.ts",
     "db:seed": "tsx --conditions=react-server drizzle/seed/index.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "ops:catalogue-cache": "tsx scripts/catalogueCache.ts"
   },
   "dependencies": {
     "@node-rs/argon2": "2.2.1",

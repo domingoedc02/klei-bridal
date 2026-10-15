@@ -61,6 +61,12 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Replica preflight (fail closed)
+        run: |
+          docker run -d --name kbs-web-preflight --label com.docker.compose.service=kbs-web alpine:3.20 sleep 60
+          trap 'docker rm -f kbs-web-preflight >/dev/null 2>&1 || true' EXIT
+          pnpm ops:catalogue-cache preflight
+
       - name: Catalogue cache unit regression
         run: pnpm exec vitest run tests/unit/catalogue-cache.test.ts
 
