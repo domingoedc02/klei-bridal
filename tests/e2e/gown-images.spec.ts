@@ -83,7 +83,9 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   if (testInfo.project.name.endsWith("dpr2") || testInfo.project.name.endsWith("dpr3")) return;
 
   await page.setContent(html, { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveScreenshot(`${fixture}-fixture-${width}.png`, {
+  const prototypeMask = [page.locator("img")];
+  const prototypeCapture = await page.screenshot({ mask: prototypeMask, maskColor: "#fff" });
+  await expect(prototypeCapture).toMatchSnapshot(`${fixture}-fixture-${width}.png`, {
     maxDiffPixelRatio: 0.02,
   });
 
@@ -100,8 +102,19 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
       fixture === "gown-detail" ? "section[aria-label$='photographs'] img" : "dialog img",
     ),
   ];
-  await expect(page).toHaveScreenshot(`${fixture}-${width}.png`, {
-    mask,
+  const builtCapture = await page.screenshot({ mask, maskColor: "#fff" });
+  const { default: sharp } = await import("sharp");
+  const prototypePixels = await sharp(prototypeCapture).raw().toBuffer({ resolveWithObject: true });
+  const builtPixels = await sharp(builtCapture).raw().toBuffer({ resolveWithObject: true });
+  expect(builtPixels.info).toEqual(prototypePixels.info);
+  let differentPixels = 0;
+  for (let index = 0; index < prototypePixels.data.length; index += 1) {
+    if (prototypePixels.data[index] !== builtPixels.data[index]) differentPixels += 1;
+  }
+  expect(
+    differentPixels / prototypePixels.info.width / prototypePixels.info.height,
+  ).toBeLessThanOrEqual(0.02);
+  await expect(builtCapture).toMatchSnapshot(`${fixture}-${width}.png`, {
     maxDiffPixelRatio: 0.02,
   });
 }
