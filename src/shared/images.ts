@@ -63,6 +63,21 @@ export function derivativeLongestEdge(
   return widths.length ? Math.max(...widths) : undefined;
 }
 
+/** Resolve a content-addressed derivative URL back to manifest width metadata. */
+export function derivativeWidthForPath(
+  image: Pick<GalleryImage, "derivatives">,
+  format: Format,
+  path: string,
+  maxWidth = ZOOM_WIDTH,
+): number | undefined {
+  return Object.entries(image.derivatives)
+    .map(([width, formats]) => ({ width: Number(width), path: formats?.[format] }))
+    .find(
+      ({ width, path: candidate }) =>
+        Number.isInteger(width) && width > 0 && width <= maxWidth && candidate === path,
+    )?.width;
+}
+
 export function altFor(
   image: Pick<GalleryImage, "altText">,
   gownName: string,

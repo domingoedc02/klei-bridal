@@ -40,15 +40,29 @@ async function main() {
           INSERT INTO gown_images
             (id, gown_id, sort_order, is_hero, alt_text, original_path, derivatives, lqip, width, height)
           VALUES
-            (${imageId}, ${gownId}, 0, true, ${"E2E gown fixture"}, ${originalPath}, ${sql.json(derivatives)}, ${generated.lqip}, 2048, 2048)
+            (${imageId}, ${gownId}, 0, true, ${"E2E gown fixture hero"}, ${originalPath}, ${sql.json(derivatives)}, ${generated.lqip}, 2048, 2048)
         `;
       } else {
         await sql`
           UPDATE gown_images
-          SET original_path = ${originalPath}, derivatives = ${sql.json(derivatives)}, lqip = ${generated.lqip}, is_hero = true
+          SET original_path = ${originalPath}, derivatives = ${sql.json(derivatives)}, lqip = ${generated.lqip}, is_hero = true, width = 2048, height = 2048
           WHERE id = ${imageId}
         `;
       }
+      const detailImageId = `${imageId}-detail`;
+      await sql`
+        INSERT INTO gown_images
+          (id, gown_id, sort_order, is_hero, alt_text, original_path, derivatives, lqip, width, height)
+        VALUES
+          (${detailImageId}, ${gownId}, 1, false, ${"E2E gown fixture detail"}, ${originalPath}, ${sql.json(derivatives)}, ${generated.lqip}, 2048, 2048)
+        ON CONFLICT (id) DO UPDATE SET
+          original_path = EXCLUDED.original_path,
+          derivatives = EXCLUDED.derivatives,
+          lqip = EXCLUDED.lqip,
+          width = 2048,
+          height = 2048,
+          is_hero = false
+      `;
       await sql`
         UPDATE gowns
         SET status = 'published', is_in_stock = ${gown.isInStock}, hero_image_id = ${imageId}

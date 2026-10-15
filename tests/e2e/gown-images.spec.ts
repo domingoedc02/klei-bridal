@@ -1,20 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
-
 const widths = [320, 480, 768, 1024, 1440, 2048];
 const stockSlug = "sample-in-stock-a-line";
 const madeToOrderSlug = "sample-made-to-order-mermaid";
 const mediaPath = /\/media\//;
 
 function selectedWidth(srcSet: string, currentSrc: string): number | undefined {
+  const currentPath = new URL(currentSrc, "http://127.0.0.1").pathname;
   const candidate = srcSet
     .split(",")
     .map((entry) => entry.trim().split(/\s+/))
     .find(
-      ([url]) =>
-        url !== undefined &&
-        new URL(url, "http://127.0.0.1").pathname === new URL(currentSrc).pathname,
+      ([url]) => url !== undefined && new URL(url, "http://127.0.0.1").pathname === currentPath,
     );
   return candidate?.[1] ? Number(candidate[1].replace(/w$/, "")) : undefined;
 }
@@ -97,24 +95,49 @@ test.describe("gown gallery and zoom image contract", () => {
     await expect(hero).toBeVisible();
     const data = await hero.evaluate((node) => {
       const image = node as HTMLImageElement;
-      return { currentSrc: image.currentSrc, srcSet: image.srcset };
+      const source = image.closest("picture")?.querySelector('source[type="image/avif"]');
+      return { currentSrc: image.currentSrc, srcSet: source?.getAttribute("srcset") ?? "" };
     });
     expect(data.currentSrc).toContain(".avif");
     const box = await hero.boundingBox();
     expect(box).not.toBeNull();
     const dpr = await page.evaluate(() => window.devicePixelRatio);
-    expect(selectedWidth(data.srcSet, data.currentSrc)).toBe(expectedWidth(box!.width, dpr));
+    const picked = selectedWidth(data.srcSet, data.currentSrc);
+    expect(picked).toBe(expectedWidth(box!.width, dpr));
+    const heroCandidates = new Map(
+      data.srcSet.split(",").map((entry) => {
+        const [url, descriptor] = entry.trim().split(/\s+/);
+        return [new URL(url!, page.url()).pathname, Number(descriptor!.replace("w", ""))];
+      }),
+    );
+    const heroRequests = mediaRequests(requests)
+      .map((url) => heroCandidates.get(new URL(url).pathname))
+      .filter((width): width is number => width !== undefined);
+    expect(heroRequests).toEqual([picked]);
+    expect(heroRequests.every((width) => width <= picked!)).toBe(true);
 
-    const second = images.nth(1);
-    const secondSources = await second.evaluate((node) => {
-      const image = node as HTMLImageElement;
-      return image.srcset.split(",").map((entry) => entry.trim().split(/\s+/)[0]);
-    });
-    expect(
-      mediaRequests(requests).some((url) => secondSources.includes(new URL(url).pathname)),
-    ).toBe(false);
-    await second.scrollIntoViewIfNeeded();
-    await expect.poll(() => mediaRequests(requests).length).toBeGreaterThan(1);
+    const belowFold = await images.evaluateAll((nodes) =>
+      nodes.slice(1).map((node) => {
+        const image = node as HTMLImageElement;
+        return {
+          top: image.getBoundingClientRect().top,
+          sources: image.srcset.split(",").map((entry) => entry.trim().split(/\s+/)[0]),
+        };
+      }),
+    );
+    const loadedBeforeScroll = new Set(mediaRequests(requests).map((url) => new URL(url).pathname));
+    for (const image of belowFold) {
+      expect(image.top).toBeGreaterThanOrEqual(await page.evaluate(() => window.innerHeight));
+      expect(
+        image.sources.every(
+          (source) => !loadedBeforeScroll.has(new URL(source!, page.url()).pathname),
+        ),
+      ).toBe(true);
+    }
+    for (const image of await images.all().then((all) => all.slice(1))) {
+      await image.scrollIntoViewIfNeeded();
+      await expect.poll(() => mediaRequests(requests).length).toBeGreaterThan(1);
+    }
     await expectNoCspViolations(page);
   });
 
@@ -161,7 +184,8 @@ test.describe("gown gallery and zoom image contract", () => {
     await expect(zoom).toBeVisible();
     const zoomData = await zoom.evaluate((node) => {
       const image = node as HTMLImageElement;
-      return { currentSrc: image.currentSrc, srcSet: image.srcset };
+      const source = image.closest("picture")?.querySelector('source[type="image/avif"]');
+      return { currentSrc: image.currentSrc, srcSet: source?.getAttribute("srcset") ?? "" };
     });
     expect(zoomData.currentSrc).toContain(".avif");
     const metadata = await zoom.evaluate((node) => {
@@ -173,6 +197,11 @@ test.describe("gown gallery and zoom image contract", () => {
     const zoomUrls = mediaRequests(requests).filter((url) => /\.(avif|webp|jpg)(?:\?|$)/.test(url));
     const zoomPath = new URL(zoomData.currentSrc).pathname;
     expect(zoomUrls.filter((url) => new URL(url).pathname === zoomPath)).toHaveLength(1);
+    const zoomRequests = mediaRequests(requests).filter((url) => {
+      const pathname = new URL(url).pathname;
+      return pathname === zoomPath;
+    });
+    expect(zoomRequests).toHaveLength(1);
     expect(mediaRequests(requests).some((url) => /originals|\/media\/originals/.test(url))).toBe(
       false,
     );
