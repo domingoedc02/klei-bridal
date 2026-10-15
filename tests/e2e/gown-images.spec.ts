@@ -84,7 +84,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
 
   await page.setContent(html, { waitUntil: "domcontentloaded" });
   const prototypeMask = [page.locator("img")];
-  const prototypeCapture = await page.screenshot({ mask: prototypeMask, maskColor: "#fff" });
+  const prototypeCapture = await page.screenshot({ mask: prototypeMask, maskColor: "#ff00ff" });
   await expect(prototypeCapture).toMatchSnapshot(`${fixture}-fixture-${width}.png`, {
     maxDiffPixelRatio: 0.02,
   });
@@ -97,12 +97,12 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     await expect(page.locator("dialog")).toBeVisible();
   }
 
-  const mask = [
-    page.locator(
-      fixture === "gown-detail" ? "section[aria-label$='photographs'] img" : "dialog img",
-    ),
-  ];
-  const builtCapture = await page.screenshot({ mask, maskColor: "#fff" });
+  const image = page
+    .locator(fixture === "gown-detail" ? "section[aria-label$='photographs'] img" : "dialog img")
+    .first();
+  await waitForImage(image);
+  const mask = [image];
+  const builtCapture = await page.screenshot({ mask, maskColor: "#ff00ff" });
   const { default: sharp } = await import("sharp");
   const prototypePixels = await sharp(prototypeCapture).raw().toBuffer({ resolveWithObject: true });
   const builtPixels = await sharp(builtCapture).raw().toBuffer({ resolveWithObject: true });
