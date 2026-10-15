@@ -19,15 +19,23 @@ async function files(root: string): Promise<Set<string>> {
   return found;
 }
 
-const rows = await db.select({ originalPath: gownImages.originalPath }).from(gownImages);
-const onDisk = await files(variantsRoot());
-const missing = rows.flatMap(({ originalPath }) =>
-  derivativePaths(originalPath).filter((path) => !onDisk.has(path)),
-);
+async function main(): Promise<void> {
+  const rows = await db.select({ originalPath: gownImages.originalPath }).from(gownImages);
+  const onDisk = await files(variantsRoot());
+  const missing = rows.flatMap(({ originalPath }) =>
+    derivativePaths(originalPath).filter((path) => !onDisk.has(path)),
+  );
 
-process.stdout.write(JSON.stringify({ checked: rows.length, missing: missing.length }) + "\n");
-if (missing.length) {
-  for (const path of missing.slice(0, 20)) process.stderr.write(`${path}\n`);
-  process.exitCode = 1;
+  process.stdout.write(JSON.stringify({ checked: rows.length, missing: missing.length }) + "\n");
+  if (missing.length) {
+    for (const path of missing.slice(0, 20)) process.stderr.write(`${path}\n`);
+    process.exitCode = 1;
+  }
+  await db.$client.end();
 }
-await db.$client.end();
+
+main().catch(async (error: unknown) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  await db.$client.end().catch(() => undefined);
+  process.exitCode = 1;
+});

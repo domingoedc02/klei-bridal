@@ -109,7 +109,16 @@ function media(container = SERVICE): never {
 }
 
 function headers(): never {
-  const changed = run("git", ["diff", "--name-only", "origin/main...HEAD"])
+  const base = process.env.GITHUB_BASE_REF
+    ? "origin/" + process.env.GITHUB_BASE_REF
+    : "origin/main";
+  let changedOutput = "";
+  try {
+    changedOutput = run("git", ["diff", "--name-only", base + "...HEAD"]);
+  } catch {
+    changedOutput = run("git", ["diff", "--name-only", "HEAD~1...HEAD"]);
+  }
+  const changed = changedOutput
     .split(/\r?\n/)
     .filter(
       (file) =>
@@ -120,14 +129,17 @@ function headers(): never {
   const violations: string[] = [];
   for (const file of changed) {
     const source = readFileSync(file, "utf8");
-    for (const header of forbiddenHeaders)
-      if (source.includes(header)) violations.push(`${file}: ${header}`);
+    for (const header of forbiddenHeaders) {
+      if (source.includes(header)) {
+        violations.push(file + ": " + header);
+      }
+    }
   }
   if (violations.length) {
-    process.stderr.write(`${violations.join("\n")}\n`);
+    process.stderr.write(violations.join("\n") + "\n");
     return process.exit(1);
   }
-  process.stdout.write(`catalogue public header check passed (${changed.length} files)\n`);
+  process.stdout.write("catalogue public header check passed (" + changed.length + " files)\n");
   return process.exit(0);
 }
 
