@@ -34,7 +34,7 @@ test("invalid catalogue query returns INVALID_QUERY without public caching", asy
   const response = await request.get(`/gowns?q=${"x".repeat(81)}`);
   expect(response.status()).toBe(400);
   expect(await response.json()).toMatchObject({ error: { code: "INVALID_QUERY" } });
-  expect(response.headers()["cache-control"]).not.toMatch(
+  expect(response.headers()["cache-control"] ?? "").not.toMatch(
     /public|s-maxage|stale-while-revalidate/i,
   );
 });
