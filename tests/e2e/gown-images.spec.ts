@@ -47,6 +47,25 @@ async function expectNoCspViolations(page: Page) {
     .toEqual([]);
 }
 
+type PrototypeScreen = "gown-detail" | "gown-zoom";
+
+async function comparePrototypeFixture(
+  page: Page,
+  fixture: PrototypeScreen,
+  testInfo: {
+    attach: (name: string, options: { body: Buffer; contentType: string }) => Promise<void>;
+  },
+) {
+  const html = await readFile(`tests/e2e/fixtures/kbs-36/${fixture}.html`, "utf8");
+  expect(html).not.toMatch(/<script\b|\son[a-z]+\s*=|fonts\.googleapis\.com|<link[^>]+https:\/\//i);
+  await testInfo.attach(`${fixture}-fixture`, {
+    body: Buffer.from(html),
+    contentType: "text/html",
+  });
+  await page.setContent(html, { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveScreenshot(`${fixture}.png`, { maxDiffPixelRatio: 0.02 });
+}
+
 test.describe("gown gallery and zoom image contract", () => {
   test("selects exact hero variant and keeps below-fold images lazy", async ({ page }) => {
     await installCspProbe(page);
@@ -160,17 +179,8 @@ test.describe("gown gallery and zoom image contract", () => {
     expect(response.status()).toBe(404);
   });
 
-  test("keeps approved prototype fixtures sanitized", async ({}, testInfo) => {
-    for (const slug of ["gown-detail", "gown-zoom"]) {
-      const fixture = await readFile(`tests/e2e/fixtures/kbs-36/${slug}.html`, "utf8");
-      expect(fixture).not.toMatch(
-        /<script\b|\son[a-z]+\s*=|fonts\.googleapis\.com|<link[^>]+https:\/\//i,
-      );
-      expect(fixture).toContain("Inquire");
-      await testInfo.attach(`${slug}-fixture`, {
-        body: Buffer.from(fixture),
-        contentType: "text/html",
-      });
-    }
+  test("matches committed approved prototype fixture baselines", async ({ page }, testInfo) => {
+    await comparePrototypeFixture(page, "gown-detail", testInfo);
+    await comparePrototypeFixture(page, "gown-zoom", testInfo);
   });
 });

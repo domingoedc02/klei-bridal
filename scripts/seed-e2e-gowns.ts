@@ -13,7 +13,7 @@ const gowns = [
 ] as const;
 
 const fixture = Buffer.from(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600" viewBox="0 0 1200 1600"><rect width="1200" height="1600" fill="#f4f1eb"/><path d="M600 180 430 560 260 1450h680L770 560Z" fill="#d9c7b8"/><circle cx="600" cy="130" r="70" fill="#c9ad99"/></svg>`,
+  `<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="2048" viewBox="0 0 2048 2048"><rect width="2048" height="2048" fill="#f4f1eb"/><path d="M1024 230 730 720 410 1830h1228L1318 720Z" fill="#d9c7b8"/><circle cx="1024" cy="165" r="95" fill="#c9ad99"/></svg>`,
 );
 
 async function main() {
@@ -40,7 +40,7 @@ async function main() {
           INSERT INTO gown_images
             (id, gown_id, sort_order, is_hero, alt_text, original_path, derivatives, lqip, width, height)
           VALUES
-            (${imageId}, ${gownId}, 0, true, ${"E2E gown fixture"}, ${originalPath}, ${sql.json(derivatives)}, ${generated.lqip}, 1200, 1600)
+            (${imageId}, ${gownId}, 0, true, ${"E2E gown fixture"}, ${originalPath}, ${sql.json(derivatives)}, ${generated.lqip}, 2048, 2048)
         `;
       } else {
         await sql`
