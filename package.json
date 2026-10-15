@@ -16,7 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest",
+    "test": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "db:generate": "NODE_OPTIONS=--conditions=react-server drizzle-kit generate",
     "db:migrate": "tsx --conditions=react-server scripts/migrate.ts",
