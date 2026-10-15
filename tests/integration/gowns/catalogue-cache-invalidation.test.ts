@@ -16,12 +16,15 @@ import type { Principal } from "@/server/pipeline";
 import { createCategory } from "@/server/services/admin-categories";
 import { updateGownImageAlt } from "@/server/services/admin-gown-images";
 import { createAdminGown, publishAdminGown } from "@/server/services/admin-gowns";
-import type { CataloguePage } from "@/server/services/catalogue";
+import { listCatalogue, type CataloguePage } from "@/server/services/catalogue";
 import {
   afterCatalogueMutation,
+  assertPublicCatalogueCacheValue,
   CatalogueCache,
   catalogueCache,
+  catalogueCacheKey,
   parseCatalogueCacheQuery,
+  resolveCatalogueCacheQuery,
   toPublicCatalogueCacheValue,
 } from "@/server/services/catalogueCache";
 
@@ -59,6 +62,48 @@ afterAll(async () => {
   await sql`DELETE FROM sessions WHERE staff_user_id = ${staffId}`;
   await sql`DELETE FROM staff_users WHERE id = ${staffId}`;
   await sql.end();
+});
+
+describe("catalogue cache Postgres read boundary", () => {
+  it("loads published catalogue once, reuses cache, and bypasses injected DB", async () => {
+    catalogueCache.clear();
+    const query = parseCatalogueCacheQuery({});
+    const before = catalogueCache.stats;
+    const first = await listCatalogue(query);
+    const afterFirst = catalogueCache.stats;
+    const second = await listCatalogue(query);
+    const afterSecond = catalogueCache.stats;
+
+    expect(second).toEqual(first);
+    expect(afterFirst.misses).toBe(before.misses + 1);
+    expect(afterSecond.hits).toBe(afterFirst.hits + 1);
+
+    // Distinct DB identity forces the injected test repository down direct SQL path.
+    const injectedDb = Object.create(db) as typeof db;
+    const beforeInjected = catalogueCache.stats;
+    const injected = await listCatalogue(query, injectedDb);
+    expect(injected).toEqual(first);
+    expect(catalogueCache.stats).toEqual(beforeInjected);
+  });
+
+  it("keeps cached result inside public DTO boundary", async () => {
+    catalogueCache.clear();
+    const query = parseCatalogueCacheQuery({});
+    const page = await listCatalogue(query);
+    const resolved = resolveCatalogueCacheQuery(query, {
+      silhouettes: page.vocabulary.silhouettes.map((option) => option.slug),
+      materials: page.vocabulary.materials.map((option) => option.slug),
+      collections: page.vocabulary.collections.map((option) => option.slug),
+    });
+    const key = catalogueCacheKey(resolved);
+    expect(key).not.toBeNull();
+    const cached = catalogueCache.read(key!);
+    expect(cached).toBeDefined();
+    expect(() => assertPublicCatalogueCacheValue(cached)).not.toThrow();
+    expect(cached).not.toHaveProperty("headers");
+    expect(cached).not.toHaveProperty("cookies");
+    expect(cached).not.toHaveProperty("session");
+  });
 });
 
 describe("catalogue cache mutation invalidation", () => {
