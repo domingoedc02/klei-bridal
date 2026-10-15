@@ -85,7 +85,9 @@ export default async function GownDetailPage({ params }: Props) {
         <Link href="/gowns">Browse gowns</Link>
       </nav>
       <h1>{gown.name}</h1>
-      {gown.isInStock ? <p aria-label="Available now">Available now</p> : null}
+      <p aria-label={gown.isInStock ? "Available now" : "Made to order"}>
+        {gown.isInStock ? "Available now" : "Made to order"}
+      </p>
       <p>{price}</p>
       {gown.description ? <p>{gown.description}</p> : null}
       <GownGallery gownName={gown.name} images={images} />

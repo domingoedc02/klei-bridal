@@ -30,10 +30,12 @@ export default defineConfig({
   projects: [
     {
       name: "phone",
+      testIgnore: /gown-images\.spec\.ts/,
       use: { ...devices["Pixel 7"], viewport: { width: 390, height: 844 } },
     },
     {
       name: "laptop",
+      testIgnore: /gown-images\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } },
     },
     ...gownImageProjects.map(([name, width, deviceScaleFactor]) => ({
