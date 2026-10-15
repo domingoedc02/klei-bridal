@@ -205,6 +205,9 @@ jobs:
       - name: Verify image derivatives before E2E
         run: pnpm images:verify
 
+      - name: E2E tests — six-project image matrix
+        run: pnpm test:e2e:images
+
       - name: E2E tests
         run: pnpm test:e2e
 

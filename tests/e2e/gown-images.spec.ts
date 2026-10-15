@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
+
 
 const widths = [320, 480, 768, 1024, 1440, 2048];
 const stockSlug = "sample-in-stock-a-line";
@@ -49,21 +50,38 @@ async function expectNoCspViolations(page: Page) {
 
 type PrototypeScreen = "gown-detail" | "gown-zoom";
 
-async function comparePrototypeFixture(
-  page: Page,
-  fixture: PrototypeScreen,
-  testInfo: {
-    attach: (name: string, options: { body: Buffer; contentType: string }) => Promise<void>;
-  },
-) {
+async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, testInfo: TestInfo) {
+  testInfo.snapshotPath(`${fixture}.png`);
   const html = await readFile(`tests/e2e/fixtures/kbs-36/${fixture}.html`, "utf8");
   expect(html).not.toMatch(/<script\b|\son[a-z]+\s*=|fonts\.googleapis\.com|<link[^>]+https:\/\//i);
   await testInfo.attach(`${fixture}-fixture`, {
     body: Buffer.from(html),
     contentType: "text/html",
   });
-  await page.setContent(html, { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveScreenshot(`${fixture}.png`, { maxDiffPixelRatio: 0.02 });
+
+  const width = page.viewportSize()?.width;
+  expect([390, 1280]).toContain(width);
+  if (testInfo.project.name.endsWith("dpr2") || testInfo.project.name.endsWith("dpr3")) return;
+
+  if (process.env.KBS_PROTOTYPE_CAPTURE === "1") {
+    await page.setContent(html, { waitUntil: "domcontentloaded" });
+  } else if (fixture === "gown-detail") {
+    await page.goto(`/gowns/${stockSlug}`);
+  } else {
+    await page.goto(`/gowns/${stockSlug}`);
+    await page.locator("section[aria-label$='photographs'] img").first().click();
+    await expect(page.locator("dialog")).toBeVisible();
+  }
+
+  const mask = [
+    page.locator(
+      fixture === "gown-detail" ? "section[aria-label$='photographs'] img" : "dialog img",
+    ),
+  ];
+  await expect(page).toHaveScreenshot(`${fixture}-${width}.png`, {
+    mask,
+    maxDiffPixelRatio: 0.02,
+  });
 }
 
 test.describe("gown gallery and zoom image contract", () => {
@@ -146,6 +164,11 @@ test.describe("gown gallery and zoom image contract", () => {
       return { currentSrc: image.currentSrc, srcSet: image.srcset };
     });
     expect(zoomData.currentSrc).toContain(".avif");
+    const metadata = await zoom.evaluate((node) => {
+      const image = node as HTMLImageElement;
+      return { width: image.naturalWidth, height: image.naturalHeight };
+    });
+    expect(Math.max(metadata.width, metadata.height)).toBe(2048);
     expect(selectedWidth(zoomData.srcSet, zoomData.currentSrc)).toBe(2048);
     const zoomUrls = mediaRequests(requests).filter((url) => /\.(avif|webp|jpg)(?:\?|$)/.test(url));
     const zoomPath = new URL(zoomData.currentSrc).pathname;
@@ -153,8 +176,6 @@ test.describe("gown gallery and zoom image contract", () => {
     expect(mediaRequests(requests).some((url) => /originals|\/media\/originals/.test(url))).toBe(
       false,
     );
-    expect(selectedWidth(zoomData.srcSet, zoomData.currentSrc)).toBe(2048);
-
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(gownUrl);
