@@ -145,6 +145,10 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     `${fixture}-fixture-layout`,
     await layoutDiagnostics(page),
   );
+  await testInfo.attach(`${fixture}-fixture-capture`, {
+    body: prototypeCapture,
+    contentType: "image/png",
+  });
   await expect(prototypeCapture).toMatchSnapshot(`${fixture}-fixture-${width}.png`, {
     maxDiffPixelRatio: 0.02,
   });
@@ -171,6 +175,10 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
     style: maskStyle,
   });
   await attachLayoutDiagnostics(testInfo, `${fixture}-built-layout`, await layoutDiagnostics(page));
+  await testInfo.attach(`${fixture}-built-capture`, {
+    body: builtCapture,
+    contentType: "image/png",
+  });
   const { default: sharp } = await import("sharp");
   const prototypePixels = await sharp(prototypeCapture).raw().toBuffer({ resolveWithObject: true });
   const builtPixels = await sharp(builtCapture).raw().toBuffer({ resolveWithObject: true });
