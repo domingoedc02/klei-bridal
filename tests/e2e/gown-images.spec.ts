@@ -137,7 +137,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   const prototypeMask = [page.locator("img")];
   const prototypeCapture = await page.screenshot({
     mask: prototypeMask,
-    maskColor: "#ffffff",
+    maskColor: "#f4f1eb",
     style: maskStyle,
   });
   await attachLayoutDiagnostics(
@@ -171,7 +171,7 @@ async function comparePrototypeFixture(page: Page, fixture: PrototypeScreen, tes
   ];
   const builtCapture = await page.screenshot({
     mask,
-    maskColor: "#ffffff",
+    maskColor: "#f4f1eb",
     style: maskStyle,
   });
   await attachLayoutDiagnostics(testInfo, `${fixture}-built-layout`, await layoutDiagnostics(page));
