@@ -1,6 +1,5 @@
 "use client";
 
-import { preload } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { altFor, heroFirst, largest, srcSet, type GalleryImage } from "@/shared/images";
 import styles from "./GownGallery.module.css";
@@ -23,19 +22,6 @@ export default function GownGallery({
   const ordered = heroFirst(images);
   const [open, setOpen] = useState<number | null>(null);
   const opener = useRef<HTMLElement | null>(null);
-
-  const hero = ordered[0];
-  const heroHref = hero && largest(hero, "jpeg", 1024);
-  if (hero && heroHref) {
-    // Hero priority: preload the AVIF candidate the browser will actually pick.
-    preload(heroHref, {
-      as: "image",
-      imageSrcSet: srcSet(hero, "avif"),
-      imageSizes: GALLERY_SIZES,
-      type: "image/avif",
-      fetchPriority: "high",
-    });
-  }
 
   const show = useCallback((index: number, from: HTMLElement) => {
     opener.current = from;
@@ -69,7 +55,7 @@ export default function GownGallery({
       <ul className={styles.list}>
         {ordered.map((image, i) => {
           const alt = altFor(image, gownName, i, ordered.length);
-          const zoomHref = largest(image, "jpeg");
+          const zoomHref = largest(image, "avif");
           return (
             <li key={image.id} className={styles.item}>
               {/* No-JS: a plain link to the 2048px file. JS upgrades it to the zoom dialog. */}

@@ -8,6 +8,14 @@ import { defineConfig, devices } from "@playwright/test";
 // laptop co-equal, and a width added later is a width nobody runs.
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 const baseURL = `http://127.0.0.1:${PORT}`;
+const gownImageProjects = [
+  ["phone-dpr1", 390, 1],
+  ["phone-dpr2", 390, 2],
+  ["phone-dpr3", 390, 3],
+  ["laptop-dpr1", 1280, 1],
+  ["laptop-dpr2", 1280, 2],
+  ["laptop-dpr3", 1280, 3],
+] as const;
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -28,6 +36,15 @@ export default defineConfig({
       name: "laptop",
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } },
     },
+    ...gownImageProjects.map(([name, width, deviceScaleFactor]) => ({
+      name,
+      testMatch: /gown-images\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width, height: width === 390 ? 844 : 800 },
+        deviceScaleFactor,
+      },
+    })),
   ],
   webServer: {
     // The standalone bundle omits static assets; copy them in as the
