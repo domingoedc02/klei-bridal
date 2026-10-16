@@ -19,7 +19,7 @@
  */
 export interface Budget {
   name: string;
-  dimension: "ip" | "session";
+  dimension: "ip" | "session" | "target" | "actor";
   limit: number;
   windowSec: number;
   failMode: "open" | "closed";
@@ -89,6 +89,14 @@ export const budgets = {
     limit: 120,
     windowSec: 60,
     failMode: "open",
+    onExceeded: "429",
+  },
+  staffInviteRedemption: {
+    name: "staff-invite-redemption",
+    dimension: "ip",
+    limit: 3,
+    windowSec: 900,
+    failMode: "closed",
     onExceeded: "429",
   },
   cspReport: {

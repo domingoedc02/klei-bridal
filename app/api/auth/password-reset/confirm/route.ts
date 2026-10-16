@@ -31,12 +31,8 @@ async function handler(request: NextRequest, context: { body: z.infer<typeof Con
     ip: clientIp(request.headers),
     userAgent: request.headers.get("user-agent"),
   };
-  const invite = (await confirmStaffInvite(input)) ?? {
-    ok: false as const,
-    reason: "invalid_token" as const,
-  };
-  const result =
-    !invite.ok && invite.reason === "invalid_token" ? await confirmPasswordReset(input) : invite;
+  const invite = await confirmStaffInvite(input);
+  const result = !invite.ok && invite.reason === "invalid_token" ? await confirmPasswordReset(input) : invite;
 
   if (!result.ok) {
     switch (result.reason) {

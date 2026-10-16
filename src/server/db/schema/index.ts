@@ -15,3 +15,4 @@ export * from "./sessions";
 export * from "./settings";
 export * from "./silhouettes";
 export * from "./staff-users";
+export * from "./staff-mail-outbox";
