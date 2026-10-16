@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 import { budgets, type Budget } from "../../../src/server/ratelimit/budgets";
 import type { RateLimitStore } from "../../../src/server/ratelimit/store";
@@ -83,7 +84,7 @@ function streamOf(bytes: number, chunk = 16 * 1024): ReadableStream<Uint8Array> 
 const ok = async () => Response.json({ ok: true });
 
 function wrap(
-  handler: (request: NextRequest) => Promise<Response> | Response,
+  handler: (request: NextRequest, context: unknown) => Promise<Response> | Response,
   options: Partial<PipelineOptions> = {},
 ) {
   const report = vi.fn();
@@ -602,5 +603,151 @@ describe("withPipeline — headers on every response", () => {
     const response = await wrap(handler, staffOptions()).route(post("{}"));
     await expectEnvelope(response, 401, "UNAUTHENTICATED");
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+// KBS-89: native form posts on an allowlisted route (decision/enquiry-nojs-csrf).
+describe("withPipeline — form option", () => {
+  const schema = z.object({
+    name: z.string().min(1),
+    note: z.string().optional(),
+    ids: z.array(z.string()).default([]),
+  });
+  const formOptions: Partial<PipelineOptions> = {
+    body: schema,
+    form: {
+      path: "/enquire",
+      fields: ["name", "note", "ids"],
+      repeatable: ["ids"],
+      omitEmpty: ["note"],
+    },
+  };
+
+  function formPost(
+    fields: [string, string][],
+    headers: Record<string, string> = {},
+    cookieToken = mintCsrfToken(),
+    fieldToken: string | null = cookieToken,
+  ): NextRequest {
+    const params = new URLSearchParams(fields);
+    if (fieldToken !== null) params.set("csrf_token", fieldToken);
+    return new NextRequest(URL_, {
+      method: "POST",
+      body: params.toString(),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-forwarded-for": "203.0.113.7",
+        origin: "http://localhost:3000",
+        cookie: `kbs_csrf=${cookieToken}`,
+        ...headers,
+      },
+      duplex: "half",
+    } as NextRequestInit);
+  }
+
+  const echo = async (_request: NextRequest, context: unknown) => Response.json(context as object);
+
+  it("parses the form, collects repeated fields, drops blank optionals, flags viaForm", async () => {
+    const handler = vi.fn(
+      async (_r: NextRequest, c: unknown) => new Response(JSON.stringify(c), { status: 200 }),
+    );
+    const response = await wrap(handler, formOptions).route(
+      formPost([
+        ["name", "Maria"],
+        ["note", ""],
+        ["ids", "a"],
+        ["ids", "b"],
+        ["evil", "x"],
+      ]),
+    );
+    expect(response.status).toBe(200);
+    const context = handler.mock.calls[0]![1] as { body: unknown; viaForm: boolean };
+    expect(context.viaForm).toBe(true);
+    expect(context.body).toEqual({ name: "Maria", ids: ["a", "b"] });
+  });
+
+  it("303s to a fixed error state, writing nothing, on every CSRF failure", async () => {
+    const real = mintCsrfToken();
+    const forged = `${real.split(".")[0]}.${"A".repeat(43)}`;
+    const cases: NextRequest[] = [
+      formPost([["name", "Maria"]], {}, real, null), // field missing
+      formPost([["name", "Maria"]], {}, real, mintCsrfToken()), // mismatch
+      formPost([["name", "Maria"]], { cookie: `kbs_csrf=${forged}` }, forged, forged), // forged
+      formPost([["name", "Maria"]], { cookie: "" }, real, real), // no cookie
+      formPost([["name", "Maria"]], { origin: "https://evil.example" }),
+      formPost([["name", "Maria"]], { "sec-fetch-site": "cross-site" }),
+    ];
+    const noOrigin = formPost([["name", "Maria"]]);
+    noOrigin.headers.delete("origin");
+    cases.push(noOrigin); // Origin is REQUIRED on the form path
+    for (const request of cases) {
+      const handler = vi.fn(ok);
+      const response = await wrap(handler, formOptions).route(request);
+      expect(response.status).toBe(303);
+      expect(response.headers.get("location")).toBe("/enquire?error=csrf");
+      expect(handler).not.toHaveBeenCalled();
+      expectSecurityHeaders(response);
+    }
+  });
+
+  it("303s validation failures with only allowlisted field names, never values", async () => {
+    const response = await wrap(ok, formOptions).route(
+      formPost([
+        ["name", ""],
+        ["zzz", "secret@example.com"],
+      ]),
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/enquire?error=invalid&fields=name");
+  });
+
+  it("303s a rate limit and an unavailable limiter without a JSON body", async () => {
+    const limited = wrap(ok, {
+      ...formOptions,
+      rateLimit: budgets.enquirySubmit,
+      rateLimitStore: () => ({ hit: async () => ({ count: 99, ttlSec: 5 }) }),
+    });
+    expect((await limited.route(formPost([["name", "Maria"]]))).headers.get("location")).toBe(
+      "/enquire?error=rate_limited",
+    );
+    const down = wrap(ok, {
+      ...formOptions,
+      rateLimit: budgets.enquirySubmit,
+      rateLimitStore: () => downStore,
+    });
+    const response = await down.route(formPost([["name", "Maria"]]));
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/enquire?error=unavailable");
+    expect(down.report).toHaveBeenCalled();
+  });
+
+  it("303s an oversized body and an unexpected handler failure, reporting only the latter", async () => {
+    const big = formPost([["name", "x".repeat(70 * 1024)]]);
+    const tooBig = wrap(ok, formOptions);
+    expect((await tooBig.route(big)).headers.get("location")).toBe("/enquire?error=bad_request");
+    const boom = wrap(async () => {
+      throw new Error("db password=hunter2");
+    }, formOptions);
+    const response = await boom.route(formPost([["name", "Maria"]]));
+    expect(response.headers.get("location")).toBe("/enquire?error=unavailable");
+    expect(boom.report).toHaveBeenCalledOnce();
+    expect(response.headers.get("location")).not.toContain("hunter2");
+  });
+
+  it("leaves JSON unchanged on a form-enabled route: header CSRF, JSON envelope", async () => {
+    const good = await wrap(echo, formOptions).route(post(JSON.stringify({ name: "Maria" })));
+    expect(good.status).toBe(200);
+    const refused = await wrap(echo, formOptions).route(
+      post(JSON.stringify({ name: "Maria" }), { "x-csrf-token": "" }),
+    );
+    await expectEnvelope(refused, 403, "FORBIDDEN");
+    // A urlencoded body is NOT accepted without `form`.
+    const plain = await wrap(ok, { body: schema }).route(formPost([["name", "Maria"]]));
+    expect(plain.status).toBe(403);
+  });
+
+  it("refuses form on a staff route or with csrf: false", () => {
+    expect(() => wrap(ok, staffOptions({ form: formOptions.form }))).toThrow(/form is allowed/);
+    expect(() => wrap(ok, { csrf: false, form: formOptions.form })).toThrow(/form is allowed/);
   });
 });

@@ -77,3 +77,17 @@ describe("csrf: false allowlist", () => {
     expect(offenders).toEqual(CSRF_OFF_ALLOWED);
   });
 });
+
+// KBS-89: `form` lets a route take a native urlencoded POST. CSRF stays on
+// (hidden field + required Origin), but the parser is route-scoped: only the
+// public enquiry submit may use it.
+const FORM_ALLOWED = ["app/api/enquiries/route.ts"];
+
+describe("form allowlist", () => {
+  it("only POST /api/enquiries sets form", () => {
+    const offenders = routeFiles(join(ROOT, "app", "api"))
+      .filter((file) => /\bform\s*:\s*\{/.test(readFileSync(file, "utf8")))
+      .map((file) => relative(ROOT, file).split("\\").join("/"));
+    expect(offenders).toEqual(FORM_ALLOWED);
+  });
+});

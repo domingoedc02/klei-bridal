@@ -105,3 +105,76 @@ test.describe("enquiry form", () => {
     expect(box!.height).toBeGreaterThanOrEqual(44);
   });
 });
+
+// KBS-89: the real server, no route mocks, JavaScript off (AC-ENQ-31).
+test.describe("enquiry form without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  const future = new Date(Date.now() + 40 * 7 * 86_400_000).toISOString().slice(0, 10);
+
+  test("a fresh visit sets kbs_csrf and the form carries the matching hidden token", async ({
+    page,
+    context,
+  }) => {
+    await page.goto("/enquire");
+    const cookie = (await context.cookies()).find((c) => c.name === "kbs_csrf");
+    expect(cookie).toBeTruthy();
+    expect(cookie!.httpOnly).toBe(false);
+    await expect(page.locator('input[name="csrf_token"]')).toHaveValue(cookie!.value);
+  });
+
+  test("submits natively, lands on the confirmation with only a reference", async ({ page }) => {
+    const email = `nojs-${Date.now()}@kleibridal.test`;
+    await page.goto("/enquire");
+    await page.getByLabel("First name").fill("Maria");
+    await page.getByLabel("Last name").fill("Santos");
+    await page.getByLabel("Contact number").fill("+63 917 123 4567");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel(/Wedding date/).fill(future);
+    await page.getByRole("button", { name: "Send enquiry" }).click();
+
+    await expect(page).toHaveURL(
+      /\/enquire\/sent\?ref=KB-[2-9A-HJKMNP-TV-Z]{4}-[2-9A-HJKMNP-TV-Z]{4}$/,
+    );
+    await expect(page.getByRole("heading", { name: "Thank you" })).toBeVisible();
+    await expect(page.locator("main")).toContainText(
+      /KB-[2-9A-HJKMNP-TV-Z]{4}-[2-9A-HJKMNP-TV-Z]{4}/,
+    );
+    await expect(page.locator("body")).not.toContainText(email);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
+
+  test("a server-side validation failure shows a readable state, not JSON", async ({ page }) => {
+    await page.goto("/enquire");
+    await page.getByLabel("First name").fill("Maria");
+    await page.getByLabel("Last name").fill("Santos");
+    await page.getByLabel("Contact number").fill("not a number");
+    await page.getByLabel("Email").fill("maria@kleibridal.test");
+    await page.getByLabel(/Wedding date/).fill(future);
+    await page.getByRole("button", { name: "Send enquiry" }).click();
+
+    await expect(page).toHaveURL(/\/enquire\?error=invalid&fields=contact_number$/);
+    await expect(page.getByRole("alert")).toContainText("Check: Contact number");
+    expect(page.url()).not.toContain("maria");
+  });
+
+  test("a missing CSRF cookie is refused with a readable state and no JSON", async ({
+    page,
+    context,
+  }) => {
+    await page.goto("/enquire");
+    await context.clearCookies();
+    await page.getByLabel("First name").fill("Maria");
+    await page.getByLabel("Last name").fill("Santos");
+    await page.getByLabel("Contact number").fill("+63 917 123 4567");
+    await page.getByLabel("Email").fill("maria@kleibridal.test");
+    await page.getByLabel(/Wedding date/).fill(future);
+    await page.getByRole("button", { name: "Send enquiry" }).click();
+
+    await expect(page).toHaveURL(/\/enquire\?error=csrf$/);
+    await expect(page.getByRole("alert")).toContainText("session expired");
+  });
+});
