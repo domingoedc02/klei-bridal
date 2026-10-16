@@ -329,7 +329,10 @@ export async function changePassword(
     .from(staffUsers)
     .where(eq(staffUsers.id, session.staff.id))
     .limit(1);
-  if (!user || !(await verifyPassword(user.passwordHash, input.currentPassword))) {
+  if (
+    !user ||
+    !(await verifyPassword(user.passwordHash ?? DUMMY_PASSWORD_HASH, input.currentPassword))
+  ) {
     if (failures < PASSWORD_CHANGE_MAX_FAILURES)
       return { ok: false, reason: "wrong_current_password" };
     // The session that tripped the limit is revoked: a stolen cookie gets
