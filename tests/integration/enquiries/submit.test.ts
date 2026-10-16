@@ -131,6 +131,7 @@ describe("POST /api/enquiries as a native form (KBS-89)", () => {
     const page = middleware(new NextRequest("http://localhost:3000/enquire"));
     const token = /kbs_csrf=([^;]+)/.exec(page.headers.get("set-cookie") ?? "")?.[1];
     expect(token).toBeTruthy();
+    if (!token) throw new Error("test setup: middleware did not mint csrf token");
     const body = input();
     const res = await POST(
       new NextRequest("http://localhost:3000/api/enquiries", {
