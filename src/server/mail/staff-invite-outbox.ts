@@ -153,7 +153,14 @@ async function terminalFailure(
 
 /** Claim and deliver pending invite mail. Lease plus provider idempotency prevents duplicate sends. */
 export async function processStaffInviteMail(
-  deps: { db?: Database; send?: typeof sendTransactionalEmail; now?: () => Date } = {},
+  deps: {
+    db?: Database;
+    send?: (
+      message: TransactionalEmail,
+      options?: { idempotencyKey?: string },
+    ) => Promise<{ providerMessageId?: string } | void>;
+    now?: () => Date;
+  } = {},
 ): Promise<boolean> {
   const db = deps.db ?? defaultDb;
   const send = deps.send ?? sendTransactionalEmail;

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   confirmPasswordReset: vi.fn(),
+  confirmStaffInvite: vi.fn(),
   validateSession: vi.fn(),
   hit: vi.fn(),
   counts: new Map<string, number>(),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/services/password-reset", () => ({
   confirmPasswordReset: mocks.confirmPasswordReset,
+  confirmStaffInvite: mocks.confirmStaffInvite,
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -54,6 +56,7 @@ function post(
 
 beforeEach(() => {
   mocks.confirmPasswordReset.mockReset();
+  mocks.confirmStaffInvite.mockReset().mockResolvedValue({ ok: false, reason: "invalid_token" });
   mocks.validateSession.mockReset().mockResolvedValue(null);
   mocks.hit.mockReset().mockImplementation(async (key: string, windowSec: number) => {
     const count = (mocks.counts.get(key) ?? 0) + 1;
@@ -99,14 +102,14 @@ describe("POST /api/auth/password-reset/confirm", () => {
     expect(mocks.confirmPasswordReset).not.toHaveBeenCalled();
   });
 
-  it("uses password-reset-email IP budget: three requests pass, fourth is 429", async () => {
+  it("uses staff-invite-redemption IP budget: three requests pass, fourth is 429", async () => {
     mocks.confirmPasswordReset.mockResolvedValue({ ok: true, revokedSessions: 1 });
 
     const responses: Response[] = [];
     for (let index = 0; index < 4; index += 1) responses.push(await POST(post()));
 
     expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 429]);
-    expect(mocks.hit).toHaveBeenCalledWith("rl:password-reset-email:ip:203.0.113.9", 900);
+    expect(mocks.hit).toHaveBeenCalledWith("rl:staff-invite-redemption:ip:203.0.113.9", 900);
     expect(mocks.confirmPasswordReset).toHaveBeenCalledTimes(3);
     expect(Number(responses[3]!.headers.get("retry-after"))).toBeGreaterThan(0);
   });
