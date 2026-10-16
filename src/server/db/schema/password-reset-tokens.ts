@@ -1,4 +1,5 @@
 import { index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 import { generateId } from "../uuid";
 import { staffUsers } from "./staff-users";
@@ -11,6 +12,7 @@ export const passwordResetTokens = pgTable(
   "password_reset_tokens",
   {
     id: uuid("id").primaryKey().$defaultFn(generateId),
+    kind: text("kind").notNull().default("reset"),
     staffUserId: uuid("staff_user_id")
       .notNull()
       .references(() => staffUsers.id, { onDelete: "cascade" }),
@@ -24,5 +26,8 @@ export const passwordResetTokens = pgTable(
     uniqueIndex("password_reset_tokens_token_hash_idx").on(table.tokenHash),
     index("password_reset_tokens_staff_user_id_idx").on(table.staffUserId),
     index("password_reset_tokens_active_idx").on(table.staffUserId, table.expiresAt),
+    uniqueIndex("password_reset_tokens_active_kind_idx")
+      .on(table.staffUserId, table.kind)
+      .where(sql`${table.usedAt} IS NULL AND ${table.revokedAt} IS NULL`),
   ],
 );
