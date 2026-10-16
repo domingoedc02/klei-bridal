@@ -89,7 +89,19 @@ describe("POST /api/auth/password-reset/confirm", () => {
     expect(body.error.code).toBe("RESET_TOKEN_INVALID");
     expect(body.error.message).toBe("This reset link is invalid or has expired.");
     expect(JSON.stringify(body)).not.toContain(TOKEN);
+    expect(mocks.confirmStaffInvite).toHaveBeenCalledOnce();
     expect(mocks.confirmPasswordReset).toHaveBeenCalledOnce();
+  });
+
+  it("accepts invite redemption through the same neutral route and returns session count", async () => {
+    mocks.confirmStaffInvite.mockResolvedValue({ ok: true, revokedSessions: 2 });
+
+    const response = await POST(post());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, revoked_sessions: 2 });
+    expect(mocks.confirmStaffInvite).toHaveBeenCalledOnce();
+    expect(mocks.confirmPasswordReset).not.toHaveBeenCalled();
   });
 
   it("rejects malformed token and password before calling reset service", async () => {

@@ -20,14 +20,10 @@ const INVITE_KIND = "invite";
 const RESET_KIND = "reset";
 const TOKEN_CLAIM_ABORT = Symbol("token_claim_abort");
 
-type MailSender = (
-  message: Parameters<typeof sendTransactionalEmail>[0],
-) => Promise<void | { providerMessageId?: string }>;
-
 export interface PasswordResetRequestDeps {
   db: Database;
   now?: () => Date;
-  sendEmail?: MailSender;
+  sendEmail?: typeof sendTransactionalEmail;
 }
 
 const defaultDeps: PasswordResetRequestDeps = { db: defaultDb };
@@ -172,12 +168,13 @@ export async function confirmStaffInvite(
   const passwordHash = await hashPassword(input.newPassword);
   try {
     return await deps.db.transaction(async (tx) => {
-      const [lockedStaff] = await tx
-        .select({ id: staffUsers.id, isActive: staffUsers.isActive })
+      const [activeStaff] = await tx
+        .select({ id: staffUsers.id })
         .from(staffUsers)
-        .where(eq(staffUsers.id, candidate.staffUserId))
+        .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
         .for("update");
-      if (!lockedStaff?.isActive) return { ok: false as const, reason: "invalid_token" as const };
+      if (!activeStaff) return { ok: false as const, reason: "invalid_token" as const };
+
       const [claimed] = await tx
         .update(passwordResetTokens)
         .set({ usedAt: now })
@@ -256,12 +253,13 @@ export async function confirmPasswordReset(
   let result: ConfirmPasswordResetResult;
   try {
     result = await deps.db.transaction(async (tx) => {
-      const [lockedStaff] = await tx
-        .select({ id: staffUsers.id, isActive: staffUsers.isActive })
+      const [activeStaff] = await tx
+        .select({ id: staffUsers.id })
         .from(staffUsers)
-        .where(eq(staffUsers.id, candidate.staffUserId))
+        .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
         .for("update");
-      if (!lockedStaff?.isActive) return { ok: false as const, reason: "invalid_token" as const };
+      if (!activeStaff) return { ok: false as const, reason: "invalid_token" as const };
+
       const [claimed] = await tx
         .update(passwordResetTokens)
         .set({ usedAt: now })
@@ -284,6 +282,7 @@ export async function confirmPasswordReset(
         .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
         .returning({ id: staffUsers.id });
       if (updated.length !== 1) throw TOKEN_CLAIM_ABORT;
+
       const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
       await tx.insert(auditLog).values({
         occurredAt: now,
