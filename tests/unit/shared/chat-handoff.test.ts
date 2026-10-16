@@ -23,7 +23,7 @@ describe("buildHandoffs", () => {
     const h = build({})!;
     expect(h.messenger!.href).toBe("https://m.me/kleibridal");
     expect(h.whatsapp!.href.startsWith("https://wa.me/639171234567?text=")).toBe(true);
-    expect(h.viber!.href.startsWith("viber://chat?number=%2B639171234567&text=")).toBe(true);
+    expect(h.viber).toBeNull();
   });
 
   it("encodes the message once and round-trips special characters", () => {
@@ -35,7 +35,7 @@ describe("buildHandoffs", () => {
     );
     expect(url.hash).toBe("");
     expect(h.whatsapp!.href).not.toMatch(/%25/);
-    expect(new URL(h.viber!.href).searchParams.get("text")).toBe(text);
+    expect(h.viber).toBeNull();
   });
 
   it("never carries fields outside the allowlist", () => {

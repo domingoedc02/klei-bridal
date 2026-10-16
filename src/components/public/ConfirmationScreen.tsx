@@ -102,12 +102,8 @@ export default function ConfirmationScreen({ data }: { data: ConfirmationData })
       "Opens WhatsApp with your details ready. Review, then send.",
       true,
     ),
-    action(
-      handoffs.viber,
-      "Viber",
-      "Opens Viber with your details ready. Review, then send.",
-      false,
-    ),
+    // Viber stays absent until approved exact protocol format is supplied.
+    null,
   ];
 
   return (

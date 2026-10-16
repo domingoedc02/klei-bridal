@@ -43,10 +43,38 @@ export function removeFavourite(id: string): void {
 export const FAVOURITE_NAMES_KEY = "kbs.favourite-names.v1";
 
 /**
- * Display names for favourited ids, `{ [id]: name }`. Nothing writes this yet
- * (hearting is KBS-14), so today it yields null and chat hand-offs omit themselves.
- * Untrusted: chatHandoff re-validates. Null when any id lacks a name.
+ * Display names for favourited ids, `{ [id]: name }`. Catalogue pages write
+ * bounded server-rendered names; this remains untrusted and chatHandoff re-validates.
+ * Null when any id lacks a name.
  */
+export function cacheFavouriteNames(gowns: Array<{ id: string; name: string }>): void {
+  try {
+    const current = read<Record<string, unknown>>(
+      FAVOURITE_NAMES_KEY,
+      {},
+      (value): value is Record<string, unknown> =>
+        typeof value === "object" && value !== null && !Array.isArray(value),
+    );
+    const next = { ...current };
+    for (const gown of gowns) {
+      if (
+        typeof gown.id === "string" &&
+        gown.id.length <= 100 &&
+        typeof gown.name === "string" &&
+        gown.name.trim() === gown.name &&
+        gown.name.length > 0 &&
+        gown.name.length <= 100 &&
+        !/[<>]/.test(gown.name) &&
+        !/[\u0000-\u001f\u007f-\u009f]/.test(gown.name)
+      )
+        next[gown.id] = gown.name;
+    }
+    window.localStorage.setItem(FAVOURITE_NAMES_KEY, JSON.stringify(next));
+  } catch {
+    // Blocked storage keeps favourites usable; confirmation omits hand-offs.
+  }
+}
+
 export function getFavouriteNames(ids: string[]): string[] | null {
   const names = read<Record<string, unknown>>(
     FAVOURITE_NAMES_KEY,

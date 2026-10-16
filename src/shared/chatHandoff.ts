@@ -119,13 +119,8 @@ export function buildHandoffs(input: HandoffInput): Handoffs | null {
       : null;
   // ponytail: Viber format is not in the approved spec text. This is Viber's documented
   // `viber://chat?number=%2B<digits>&text=`. Confirm with team-lead; swap here only.
-  const viber: Handoff | null =
-    settings.viberNumber && DIGITS.test(settings.viberNumber)
-      ? {
-          channel: "viber",
-          href: `viber://chat?number=%2B${settings.viberNumber}&text=${text}`,
-        }
-      : null;
+  // Viber omitted until approved exact protocol format is supplied.
+  const viber: Handoff | null = null;
   if (!messenger && !whatsapp && !viber) return null;
   return { shortLink, messenger, whatsapp, viber };
 }
