@@ -19,7 +19,7 @@
  */
 export interface Budget {
   name: string;
-  dimension: "ip" | "session";
+  dimension: "ip" | "session" | "target" | "actor";
   limit: number;
   windowSec: number;
   failMode: "open" | "closed";

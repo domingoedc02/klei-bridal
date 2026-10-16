@@ -185,7 +185,7 @@ export async function confirmStaffInvite(
       )
       .returning({ staffUserId: passwordResetTokens.staffUserId });
     if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
-    await tx
+    const updated = await tx
       .update(staffUsers)
       .set({
         passwordHash,
@@ -194,7 +194,10 @@ export async function confirmStaffInvite(
         lockedUntil: null,
         updatedAt: now,
       })
-      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)));
+      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+      .returning({ id: staffUsers.id });
+    if (updated.length !== 1) return { ok: false as const, reason: "invalid_token" as const };
+    const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
     await tx.insert(auditLog).values({
       occurredAt: now,
       actorUserId: null,
@@ -204,7 +207,7 @@ export async function confirmStaffInvite(
       entityId: candidate.staffUserId,
       detail: {},
     });
-    return { ok: true as const, revokedSessions: 0 };
+    return { ok: true as const, revokedSessions };
   });
   return result;
 }
@@ -256,10 +259,12 @@ export async function confirmPasswordReset(
       .returning({ staffUserId: passwordResetTokens.staffUserId });
     if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
 
-    await tx
+    const updated = await tx
       .update(staffUsers)
       .set({ passwordHash, failedLoginCount: 0, lockedUntil: null, updatedAt: now })
-      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)));
+      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+      .returning({ id: staffUsers.id });
+    if (updated.length !== 1) return { ok: false as const, reason: "invalid_token" as const };
     const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
     await tx.insert(auditLog).values({
       occurredAt: now,

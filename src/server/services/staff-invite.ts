@@ -212,7 +212,7 @@ export async function resendStaffInvite(
     await tx.insert(auditLog).values({
       occurredAt: now,
       actorUserId: actor.staff.id,
-      action: "staff.invite_resent",
+      action: "staff.invite_resend",
       entityType: "staff_user",
       entityId: staffUserId,
       detail: {},
@@ -231,6 +231,7 @@ export async function getStaffInviteState(
     .select({
       expiresAt: passwordResetTokens.expiresAt,
       usedAt: passwordResetTokens.usedAt,
+      revokedAt: passwordResetTokens.revokedAt,
       outboxStatus: staffMailOutbox.status,
     })
     .from(passwordResetTokens)
@@ -241,8 +242,13 @@ export async function getStaffInviteState(
     .orderBy(desc(passwordResetTokens.createdAt))
     .limit(1);
   if (!token) return null;
+  const state = token.usedAt
+    ? "accepted"
+    : token.revokedAt || token.expiresAt <= now || token.outboxStatus === "failed"
+      ? "expired"
+      : "pending";
   return {
-    state: token.usedAt ? "accepted" : token.expiresAt <= now ? "expired" : "pending",
+    state,
     expires_at: token.expiresAt.toISOString(),
     accepted_at: token.usedAt?.toISOString() ?? null,
     delivery: token.outboxStatus === "failed" ? "failed" : "sent",
