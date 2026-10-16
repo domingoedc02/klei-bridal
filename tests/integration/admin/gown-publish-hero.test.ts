@@ -38,7 +38,7 @@ afterAll(async () => {
 });
 
 async function gownWithHero(
-  heroStatus: "pending" | "failed" | "done" | null,
+  heroStatus: "pending" | "failed" | "done" | "no-job" | null,
   secondStatus?: "pending" | "failed" | "done",
 ) {
   const gownId = randomUUID();
@@ -49,7 +49,7 @@ async function gownWithHero(
   `;
   const ids: string[] = [];
   for (const [index, status] of [heroStatus, secondStatus].entries()) {
-    if (status === undefined) continue;
+    if (status === undefined || status === null) continue; // null: the gown has no image at all
     const imageId = randomUUID();
     ids.push(imageId);
     imageIds.push(imageId);
@@ -57,7 +57,7 @@ async function gownWithHero(
       INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
       VALUES (${imageId}, ${gownId}, ${index}, ${index === 0}, ${`publish-hero/${imageId}.jpg`}, 10, 10)
     `;
-    if (status) {
+    if (status !== "no-job") {
       await sql`
         INSERT INTO image_jobs (id, gown_image_id, status)
         VALUES (${randomUUID()}, ${imageId}, ${status})
@@ -92,7 +92,7 @@ describe("publish ready-hero gate", () => {
       code: "VALIDATION_ERROR",
       message: "Check the highlighted fields.",
     });
-    expect(error?.detail).toEqual({ fields: { images: message } });
+    expect(error?.fields).toEqual({ images: message });
     expect(JSON.stringify(error)).not.toContain(gownId);
   });
 
@@ -104,15 +104,19 @@ describe("publish ready-hero gate", () => {
       code: "VALIDATION_ERROR",
       message: "Check the highlighted fields.",
     });
-    expect(error?.detail).toEqual({ fields: { images: "Add a gown image before publishing." } });
+    expect(error?.fields).toEqual({ images: "Add a gown image before publishing." });
+
+    // A hero with no encode job at all is not ready either (KBS-117 gate).
+    const noJob = await gownWithHero("no-job");
+    expect((await publishError(noJob.gownId))?.fields).toEqual({
+      images: "Choose a hero photo that has finished processing.",
+    });
   });
 
   it("refuses ready non-hero when hero is still pending", async () => {
     const { gownId, imageIds: ids } = await gownWithHero("pending", "done");
     const error = await publishError(gownId);
-    expect(error?.detail).toEqual({
-      fields: { images: "Choose a hero photo that has finished processing." },
-    });
+    expect(error?.fields).toEqual({ images: "Choose a hero photo that has finished processing." });
     expect(ids).toHaveLength(2);
   });
 

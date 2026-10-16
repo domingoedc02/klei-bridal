@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, count, eq, max, sql } from "drizzle-orm";
+import { and, asc, count, eq, max, ne, sql } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import { db as defaultDb, type Database } from "@/server/db/client";
@@ -438,7 +438,7 @@ export async function deleteGownImage(
       const [next] = await tx
         .select({ id: gownImages.id })
         .from(gownImages)
-        .where(eq(gownImages.gownId, gownId))
+        .where(and(eq(gownImages.gownId, gownId), ne(gownImages.id, imageId)))
         .orderBy(asc(gownImages.sortOrder))
         .limit(1);
       if (gown.status === "published" && image.isHero) {
@@ -451,10 +451,11 @@ export async function deleteGownImage(
           "A published gown needs at least one photo. Add another photo or unpublish the gown first.",
         );
       }
+      // Delete first: the single-hero unique index forbids two heroes at once.
+      await tx.delete(gownImages).where(eq(gownImages.id, imageId));
       if (image.isHero && next) {
         await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, next.id));
       }
-      await tx.delete(gownImages).where(eq(gownImages.id, imageId));
       await tx.insert(auditLog).values({
         occurredAt: new Date(),
         actorUserId: actor.staff.id,

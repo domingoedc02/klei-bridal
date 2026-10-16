@@ -82,9 +82,11 @@ describe("GET /api/admin/staff", () => {
       email: `staff-${id}@kleibridal.test`,
       is_active: true,
       password_change_pending: false,
+      invite: null, // legacy account, no invite row: null is never "accepted" (spec/api/admin-staff-invite)
       last_sign_in_at: null,
       created_at: expect.any(String),
     });
+    expect(raw).not.toMatch(/token|link|payload/i);
   });
 
   it("refuses without a session", async () => {
@@ -108,55 +110,84 @@ describe("POST /api/admin/staff", () => {
     expect(await sql`SELECT id FROM staff_users WHERE email = ${email}`).toHaveLength(0);
   });
 
-  it("creates with an Argon2id hash, 72-hour pending state, and no credential disclosure", async () => {
+  it("creates a passwordless account with a 24-hour hashed invite, one outbox row, and no credential disclosure", async () => {
     const email = `created-${randomUUID()}@kleibridal.test`;
-    const password = "A-long-temporary-password-42!";
-    const input = { name: "Created Person", email, password };
+    const input = { name: "Created Person", email };
     const res = await create(req("/api/admin/staff", "POST", input), {
       principal: principal(adminId),
       body: input,
     });
     expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body).toMatchObject({
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const raw = await res.text();
+    const body = JSON.parse(raw);
+    ids.push(body.id);
+    expect(body).toEqual({
+      id: body.id,
       name: "Created Person",
       email,
       is_active: true,
-      password_change_pending: true,
+      password_change_pending: false,
+      last_sign_in_at: null,
+      created_at: expect.any(String),
+      invite: {
+        state: "pending",
+        expires_at: expect.any(String),
+        accepted_at: null,
+        delivery: "sent",
+      },
     });
-    expect(JSON.stringify(body)).not.toContain(password);
     const [row] =
       await sql`SELECT password_hash, temp_password_expires_at FROM staff_users WHERE email = ${email}`;
-    expect(row!.password_hash).toMatch(/^\$argon2id\$/);
-    expect(new Date(row!.temp_password_expires_at).getTime()).toBeGreaterThan(
-      Date.now() + 71 * 60 * 60 * 1000,
-    );
-    ids.push(body.id);
+    expect(row!.password_hash).toBeNull();
+    expect(row!.temp_password_expires_at).toBeNull();
+
+    const tokens = await sql`
+      SELECT id, token_hash, expires_at, created_at FROM password_reset_tokens
+      WHERE staff_user_id = ${body.id} AND kind = 'invite'`;
+    expect(tokens).toHaveLength(1);
+    const token = tokens[0]!;
+    expect(token.token_hash).toMatch(/^[0-9a-f]{64}$/);
+    const ttl = new Date(token.expires_at).getTime() - new Date(token.created_at).getTime();
+    expect(ttl).toBeGreaterThan(23.9 * 60 * 60 * 1000);
+    expect(ttl).toBeLessThan(24.1 * 60 * 60 * 1000); // 24 h, never the 72 h of KBS-24-1 temp passwords
+    expect(new Date(body.invite.expires_at).getTime()).toBe(new Date(token.expires_at).getTime());
+    const outbox = await sql`SELECT status FROM staff_mail_outbox WHERE token_id = ${token.id}`;
+    expect(outbox).toHaveLength(1);
+
+    expect(raw).not.toContain(token.token_hash);
+    expect(raw).not.toMatch(/"password"|password_hash|hash|token|link|payload|outbox/i);
     const [audit] =
       await sql`SELECT detail FROM audit_log WHERE entity_id = ${body.id} AND action = 'staff.create'`;
     expect(audit!.detail).toEqual({});
+
+    // Same address in a different case: 409 CONFLICT, nothing more created.
+    const dup = await create(
+      req("/api/admin/staff", "POST", { name: "Dup", email: email.toUpperCase() }),
+      {} as never,
+    );
+    expect(dup.status).toBe(409);
+    expect((await dup.json()).error.code).toBe("CONFLICT");
+    expect(await sql`SELECT id FROM staff_users WHERE lower(email) = ${email}`).toHaveLength(1);
   });
 
-  it("rejects missing or extra password before insert", async () => {
+  it("rejects a password field or any extra field with 422 'not accepted' before insert", async () => {
     const email = `invalid-${randomUUID()}@kleibridal.test`;
-    const missing = { name: "Invalid", email };
-    const extra = { name: "Invalid", email, password: "x", extra: true };
-    expect(
-      (
-        await create(req("/api/admin/staff", "POST", missing), {
-          principal: principal(adminId),
-          body: missing as never,
-        })
-      ).status,
-    ).toBe(422);
-    expect(
-      (
-        await create(req("/api/admin/staff", "POST", extra), {
-          principal: principal(adminId),
-          body: extra as never,
-        })
-      ).status,
-    ).toBe(422);
+    const withPassword = { name: "Invalid", email, password: "A-long-password-42!" };
+    const extra = { name: "Invalid", email, extra: true };
+    const missingEmail = { name: "Invalid" };
+    const sent = [withPassword, extra, missingEmail];
+    const results = [];
+    for (const body of sent) {
+      // `{}` context: the real pipeline parses the body; an injected `body` would skip the schema.
+      results.push(await create(req("/api/admin/staff", "POST", body), {} as never));
+    }
+    for (const res of results) expect(res.status).toBe(422);
+    const [pw, ex] = await Promise.all(results.slice(0, 2).map((r) => r.json()));
+    expect(pw.error.code).toBe("VALIDATION_ERROR");
+    expect(pw.error.fields).toEqual({ password: "not accepted" });
+    expect(JSON.stringify(pw)).not.toContain("A-long-password-42!");
+    expect(ex.error.fields).toEqual({ extra: "not accepted" });
     const rows = await sql`SELECT id FROM staff_users WHERE email = ${email}`;
     expect(rows).toHaveLength(0);
   });
