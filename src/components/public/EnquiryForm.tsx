@@ -5,9 +5,12 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   getContactDetails,
   getFavouriteIds,
+  getFavouriteNames,
   removeFavourite,
   type ContactDetails,
 } from "@/client/favourites/storage";
+import ConfirmationScreen, { type ConfirmationData } from "@/components/public/ConfirmationScreen";
+import type { ChatSettings } from "@/shared/chatHandoff";
 import { todayIn } from "@/shared/dates";
 import {
   ENQUIRY_FIELD_LABELS,
@@ -39,6 +42,8 @@ interface EnquiryFormProps {
   serverError?: FormErrorCode | null;
   /** Comma-separated `?fields=` from the same redirect; filtered against the allowlist. */
   errorFields?: string;
+  /** Studio chat destinations (KBS-18). Optional: unset means no chat actions. */
+  chatSettings?: ChatSettings;
 }
 
 export default function EnquiryForm({
@@ -46,6 +51,7 @@ export default function EnquiryForm({
   csrfToken = "",
   serverError = null,
   errorFields = "",
+  chatSettings = { messengerPage: null, whatsappNumber: null, viberNumber: null },
 }: EnquiryFormProps) {
   const flaggedFields = errorFields
     .split(",")
@@ -63,7 +69,7 @@ export default function EnquiryForm({
       : null,
   );
   const [pending, setPending] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [sent, setSent] = useState<ConfirmationData | null>(null);
   // Native required/type/maxLength checks stay on until hydration, so a no-JS
   // or pre-hydration submit still catches blanks before the server round trip.
   const [hydrated, setHydrated] = useState(false);
@@ -147,7 +153,20 @@ export default function EnquiryForm({
       } catch {
         /* blocked storage must not block submission */
       }
-      setSent(true);
+      // Response is the approved 201/200 shape; anything unexpected just drops the extras.
+      const result = (await response.json().catch(() => null)) as {
+        reference?: unknown;
+        short_link_url?: unknown;
+      } | null;
+      setSent({
+        reference: typeof result?.reference === "string" ? result.reference : null,
+        shortLinkUrl: typeof result?.short_link_url === "string" ? result.short_link_url : null,
+        firstName: String(values.first_name),
+        lastName: String(values.last_name),
+        weddingDate: String(values.wedding_date),
+        gownNames: getFavouriteNames(gowns),
+        settings: chatSettings,
+      });
     } catch (submissionError) {
       setError(
         submissionError instanceof Error
@@ -176,13 +195,7 @@ export default function EnquiryForm({
       .filter(Boolean)
       .join(" ") || undefined;
 
-  if (sent)
-    return (
-      <section className="enquiry-success" aria-live="polite">
-        <h1>Thank you</h1>
-        <p>Your enquiry was sent. We will be in touch soon.</p>
-      </section>
-    );
+  if (sent) return <ConfirmationScreen data={sent} />;
 
   return (
     <form
@@ -439,11 +452,6 @@ export default function EnquiryForm({
         .nojs {
           color: #5b544a;
           font-size: 0.875rem;
-        }
-        .enquiry-success {
-          max-width: 52rem;
-          margin: 0 auto;
-          padding: 2rem 1.5rem;
         }
         @media (max-width: 600px) {
           .fields {

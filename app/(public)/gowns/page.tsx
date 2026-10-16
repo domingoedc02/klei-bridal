@@ -10,6 +10,7 @@ import {
   gownFilterQueryString,
   type GownFilterQuery,
 } from "@/shared/schemas/gownFilters";
+import FavouriteNameHydrator from "@/components/public/FavouriteNameHydrator";
 import { MEDIA_PREFIX } from "@/shared/images";
 
 export const dynamic = "force-dynamic";
@@ -118,6 +119,7 @@ export default async function GownsPage({ searchParams }: Props) {
     <main>
       <h1>Gowns</h1>
       <p>Find a gown by shape, material, collection, or price.</p>
+      <FavouriteNameHydrator gowns={catalogue.cards.map(({ id, name }) => ({ id, name }))} />
       <p data-filter-query={queryString}>
         {queryString ? `Active filters: ${queryString}` : "Showing all gowns."}
       </p>
