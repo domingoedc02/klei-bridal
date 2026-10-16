@@ -83,6 +83,14 @@ export const budgets = {
     failMode: "open",
     onExceeded: "429",
   },
+  staffInviteRedemption: {
+    name: "staff-invite-redemption",
+    dimension: "ip",
+    limit: 3,
+    windowSec: 900,
+    failMode: "closed",
+    onExceeded: "429",
+  },
   cspReport: {
     name: "csp-report",
     dimension: "ip",

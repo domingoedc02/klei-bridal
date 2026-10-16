@@ -63,6 +63,7 @@ describe("budgets (spec/security → Rate limiting)", () => {
       ["enquiry-link", "ip", 30, 60, "open", "429"],
       ["enquiry-channel", "ip", 20, 60, "open", "silent-204"],
       ["admin-write", "session", 120, 60, "open", "429"],
+      ["staff-invite-redemption", "ip", 3, 900, "closed", "429"],
       ["csp-report", "ip", 30, 60, "closed", "429"],
       ["mail-webhook", "ip", 120, 60, "open", "429"],
     ]);
