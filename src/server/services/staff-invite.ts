@@ -45,7 +45,8 @@ export async function issueStaffInvite(
       .select({ id: staffUsers.id, name: staffUsers.name, email: staffUsers.email })
       .from(staffUsers)
       .where(and(eq(staffUsers.id, staffUserId), eq(staffUsers.isActive, true)))
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!staff) return null;
 
     await tx
