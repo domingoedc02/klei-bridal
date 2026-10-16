@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
-import { cookies } from "next/headers";
+import { headers, cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { env } from "@/config/env";
@@ -12,6 +11,8 @@ import { clientIp } from "@/server/ratelimit/client-ip";
 import { getRateLimitStore } from "@/server/ratelimit";
 import { pagePrincipal, resolveShortLink } from "@/server/services/short-link";
 import { buildShortLinkMetadata } from "@/server/short-link/render";
+
+import styles from "./page.module.css";
 
 export { buildShortLinkMetadata };
 
@@ -48,26 +49,58 @@ export default async function ShortLinkPage({
   // defines metadata/escaping; JSX avoids raw HTML injection here.
   if (result.kind === "closed") {
     return (
-      <main>
-        <h1>Klei Bridal Studio</h1>
-        <p>This enquiry is closed. Please contact Klei Bridal Studio.</p>
+      <main className={styles.page}>
+        <div className={styles.shell}>
+          <p className={styles.brand}>Klei Bridal Studio</p>
+          <section className={styles.closed} aria-labelledby="closed-title">
+            <h1 className={styles.closedTitle} id="closed-title">
+              This enquiry is closed
+            </h1>
+            <p className={styles.closedText}>
+              Please contact Klei Bridal Studio if you need help with your enquiry.
+            </p>
+          </section>
+        </div>
       </main>
     );
   }
   return (
-    <main>
-      <h1>Klei Bridal Studio</h1>
-      <p>Enquiry reference</p>
-      <p><strong>{result.view.reference}</strong></p>
-      <ul>
-        {result.view.gowns.map((gown) => (
-          <li key={`${gown.name}-${gown.imageUrl ?? "no-image"}`}>
-            {gown.imageUrl ? <img src={gown.imageUrl} alt={gown.name} /> : null}
-            <p>{gown.name}</p>
-          </li>
-        ))}
-      </ul>
-      <p>Full details are visible to Klei Bridal Studio staff.</p>
+    <main className={styles.page}>
+      <div className={styles.shell}>
+        <p className={styles.brand}>Klei Bridal Studio</p>
+        <section className={styles.intro} aria-labelledby="enquiry-title">
+          <h1 className={styles.title} id="enquiry-title">
+            Your enquiry is with us
+          </h1>
+          <p className={styles.lede}>
+            Keep this page as your reference while we help you find your gown.
+          </p>
+        </section>
+        <section className={styles.reference} aria-label="Enquiry reference">
+          <span className={styles.referenceLabel}>Enquiry reference</span>
+          <strong className={styles.referenceValue}>{result.view.reference}</strong>
+        </section>
+        {result.view.gowns.length ? (
+          <section className={styles.gowns} aria-labelledby="gowns-title">
+            <h2 className={styles.gownsTitle} id="gowns-title">
+              Your selected gowns
+            </h2>
+            <ul className={styles.gownList}>
+              {result.view.gowns.map((gown) => (
+                <li className={styles.gown} key={`${gown.name}-${gown.imageUrl ?? "no-image"}`}>
+                  {gown.imageUrl ? (
+                    <img className={styles.gownImage} src={gown.imageUrl} alt={gown.name} />
+                  ) : null}
+                  <p className={styles.gownName}>{gown.name}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        <p className={styles.note}>
+          Full details are visible to Klei Bridal Studio staff.
+        </p>
+      </div>
     </main>
   );
 }

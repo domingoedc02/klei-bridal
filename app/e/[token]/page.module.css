@@ -1,0 +1,156 @@
+.page {
+  --ink: #2b2825;
+  --muted: #706861;
+  --paper: #faf7f4;
+  --surface: #fffdfa;
+  --line: #ded6cc;
+  --accent: #765d31;
+  min-height: 100dvh;
+  padding: clamp(1.5rem, 5vw, 4rem) 1rem;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.shell {
+  width: min(100%, 58rem);
+  margin: 0 auto;
+}
+
+.brand {
+  margin: 0;
+  color: var(--accent);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.intro {
+  max-width: 38rem;
+  margin: clamp(3rem, 11vw, 7rem) auto 2.5rem;
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2rem, 7vw, 4.5rem);
+  font-weight: 400;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+.lede {
+  margin: 1.25rem 0 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.6;
+}
+
+.reference {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0 auto 3rem;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  text-align: center;
+}
+
+.referenceLabel {
+  color: var(--muted);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.referenceValue {
+  font-size: clamp(1.25rem, 4vw, 1.8rem);
+  letter-spacing: 0.08em;
+}
+
+.gowns {
+  margin: 0;
+}
+
+.gownsTitle {
+  margin: 0 0 1rem;
+  font-size: 1.4rem;
+  font-weight: 400;
+}
+
+.gownList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gown {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.gownImage {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  background: #eee8e1;
+}
+
+.gownName {
+  margin: 0;
+  padding: 1rem;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+
+.note {
+  margin: 2.5rem 0 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.closed {
+  max-width: 38rem;
+  margin: clamp(5rem, 16vw, 10rem) auto 0;
+  text-align: center;
+}
+
+.closedTitle {
+  margin: 0;
+  font-size: clamp(2rem, 7vw, 4rem);
+  font-weight: 400;
+  line-height: 1.08;
+}
+
+.closedText {
+  margin: 1.25rem 0 0;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page * {
+    scroll-behavior: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .reference,
+  .gown {
+    border: 1px solid CanvasText;
+  }
+}
