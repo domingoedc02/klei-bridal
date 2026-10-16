@@ -114,14 +114,14 @@ describe("POST /api/auth/password-reset/confirm", () => {
     expect(mocks.confirmPasswordReset).not.toHaveBeenCalled();
   });
 
-  it("uses password-reset-email IP budget: three requests pass, fourth is 429", async () => {
+  it("uses staff-invite-redemption IP budget: three requests pass, fourth is 429", async () => {
     mocks.confirmPasswordReset.mockResolvedValue({ ok: true, revokedSessions: 1 });
 
     const responses: Response[] = [];
     for (let index = 0; index < 4; index += 1) responses.push(await POST(post()));
 
     expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 429]);
-    expect(mocks.hit).toHaveBeenCalledWith("rl:password-reset-email:ip:203.0.113.9", 900);
+    expect(mocks.hit).toHaveBeenCalledWith("rl:staff-invite-redemption:ip:203.0.113.9", 900);
     expect(mocks.confirmPasswordReset).toHaveBeenCalledTimes(3);
     expect(Number(responses[3]!.headers.get("retry-after"))).toBeGreaterThan(0);
   });

@@ -82,6 +82,6 @@ export const GET = withPipeline(
 
 export const POST = withPipeline(handler, {
   auth: "public",
-  rateLimit: budgets.passwordResetEmail,
+  rateLimit: budgets.staffInviteRedemption,
   body: ConfirmBody,
 });
