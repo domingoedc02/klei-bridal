@@ -96,6 +96,11 @@ describe("staff invite tokens", () => {
     const sessionA = await createSession(db, { staffUserId: id, ip: null, userAgent: "rollback-a" });
     const sessionB = await createSession(db, { staffUserId: id, ip: null, userAgent: "rollback-b" });
     const now = new Date("2026-10-16T00:30:00Z");
+    await sql`
+      UPDATE staff_users
+      SET temp_password_expires_at = ${new Date(now.getTime() + 60 * 60_000)}
+      WHERE id = ${id}
+    `;
     const invite = await issueStaffInvite(id, { db, now: () => now });
     await sql`
       CREATE OR REPLACE FUNCTION kbs_test_skip_staff_update() RETURNS trigger AS $fn$
