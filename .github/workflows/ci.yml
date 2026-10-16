@@ -13,6 +13,8 @@ env:
   DATABASE_URL: postgresql://klei:klei_ci_pw@localhost:5432/klei_ci
   REDIS_URL: redis://localhost:6379
   SESSION_SECRET: ci-only-session-secret-not-a-real-secret-00
+  STAFF_MAIL_DATA_KEYS: 1:63692f8b8f6f4c7ad4e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6
+  STAFF_MAIL_DATA_KEY_VERSION: 1
   SITE_URL: http://localhost:3000
   NEXT_PUBLIC_SITE_URL: http://localhost:3000
   MAIL_PROVIDER_API_KEY: ci-dummy-key

@@ -29,7 +29,13 @@ function pendingDb(attempts = 0) {
         where: () => ({
           for: () => ({
             limit: async () => [
-              { id: "outbox-1", payload: encryptStaffMailPayload(payload), attempts },
+              {
+                id: "outbox-1",
+                payload: encryptStaffMailPayload(payload),
+                attempts,
+                keyVersion: 1,
+                idempotencyKey: "staff-invite:test",
+              },
             ],
           }),
         }),
@@ -86,13 +92,15 @@ describe("staff invite mail outbox", () => {
 
   it("marks a void-returning provider delivery sent and clears payload", async () => {
     const { db, update, set } = pendingDb();
-    const send = vi.fn(async () => undefined);
+    const send = vi.fn(
+      async (_message: typeof payload, _options?: { idempotencyKey?: string }) => undefined,
+    );
 
     await expect(
       processStaffInviteMail({ db, send, now: () => new Date("2026-10-16T00:00:00Z") }),
     ).resolves.toBe(true);
 
-    expect(send).toHaveBeenCalledWith(payload);
+    expect(send).toHaveBeenCalledWith(payload, { idempotencyKey: expect.any(String) });
     expect(update).toHaveBeenCalled();
     expect(set).toHaveBeenCalledWith(
       expect.objectContaining({ status: "sent", payload: null, providerMessageId: null }),
@@ -101,7 +109,11 @@ describe("staff invite mail outbox", () => {
 
   it("stores provider ID and clears payload after success", async () => {
     const { db, set } = pendingDb();
-    const send = vi.fn(async () => ({ providerMessageId: "provider-1" }));
+    const send = vi.fn(
+      async (_message: typeof payload, _options?: { idempotencyKey?: string }) => ({
+        providerMessageId: "provider-1",
+      }),
+    );
 
     await processStaffInviteMail({ db, send });
 
@@ -112,7 +124,7 @@ describe("staff invite mail outbox", () => {
 
   it("schedules retry after provider failure without persisting provider details", async () => {
     const { db, set } = pendingDb();
-    const send = vi.fn(async () => {
+    const send = vi.fn(async (_message: typeof payload, _options?: { idempotencyKey?: string }) => {
       throw new Error("provider secret detail");
     });
     const now = new Date("2026-10-16T00:00:00Z");
@@ -136,7 +148,13 @@ describe("staff invite mail outbox", () => {
           where: () => ({
             for: () => ({
               limit: async () => [
-                { id: "outbox-1", payload: encryptStaffMailPayload(payload), attempts: 2 },
+                {
+                  id: "outbox-1",
+                  payload: encryptStaffMailPayload(payload),
+                  attempts: 2,
+                  keyVersion: 1,
+                  idempotencyKey: "staff-invite:test",
+                },
               ],
             }),
           }),
@@ -164,7 +182,7 @@ describe("staff invite mail outbox", () => {
       ),
       update: updateState.update,
     } as never;
-    const send = vi.fn(async () => {
+    const send = vi.fn(async (_message: typeof payload, _options?: { idempotencyKey?: string }) => {
       throw new Error("provider secret detail");
     });
 

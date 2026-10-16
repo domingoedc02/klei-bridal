@@ -4,6 +4,8 @@ const REQUIRED_BASE: Record<string, string> = {
   DATABASE_URL: "postgresql://klei:pw@localhost:5432/klei_dev",
   REDIS_URL: "redis://localhost:6379",
   SESSION_SECRET: "a".repeat(32),
+  STAFF_MAIL_DATA_KEYS: "1:" + "a".repeat(64),
+  STAFF_MAIL_DATA_KEY_VERSION: "1",
   SITE_URL: "http://localhost:3000",
   NEXT_PUBLIC_SITE_URL: "http://localhost:3000",
   MAIL_PROVIDER_API_KEY: "re_test_key",

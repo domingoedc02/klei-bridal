@@ -28,6 +28,8 @@ export const staffMailOutbox = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     status: text("status").notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
+    leaseId: text("lease_id"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
     providerMessageId: text("provider_message_id"),
     payload: bytea("payload"),
     keyVersion: integer("key_version").notNull().default(1),
@@ -41,7 +43,7 @@ export const staffMailOutbox = pgTable(
     index("staff_mail_outbox_pending_idx").on(table.status, table.availableAt),
     check(
       "staff_mail_outbox_status_check",
-      sql`${table.status} IN ('pending', 'sent', 'failed', 'cancelled')`,
+      sql`${table.status} IN ('pending', 'in_flight', 'sent', 'failed', 'cancelled')`,
     ),
   ],
 );

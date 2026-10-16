@@ -1,40 +1,66 @@
 import "server-only";
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import { db as defaultDb, type Database } from "@/server/db/client";
 import { auditLog, passwordResetTokens, staffMailOutbox } from "@/server/db/schema";
 import { sendTransactionalEmail, type TransactionalEmail } from "@/server/mail/send";
 
-const KEY_VERSION = 1;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 60_000;
+const LEASE_MS = 5 * 60_000;
 const ALGORITHM = "aes-256-gcm";
 
 type MailPayload = TransactionalEmail;
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+type Keyring = Map<number, Buffer>;
 
-function key(): Buffer {
-  return createHash("sha256").update(env.SESSION_SECRET).digest();
+function keyring(): Keyring {
+  return new Map(
+    env.STAFF_MAIL_DATA_KEYS.split(",").map((entry) => {
+      const [version, hex] = entry.trim().split(":");
+      if (!version || !hex || !/^\d+$/.test(version) || !/^[0-9a-f]{64}$/i.test(hex)) {
+        throw new Error("STAFF_MAIL_DATA_KEYS must use version:64-hex-key entries");
+      }
+      return [Number(version), Buffer.from(hex, "hex")];
+    }),
+  );
 }
 
-export function encryptStaffMailPayload(payload: MailPayload): Buffer {
+function currentKeyVersion(): number {
+  return env.STAFF_MAIL_DATA_KEY_VERSION;
+}
+
+function key(version: number): Buffer {
+  const value = keyring().get(version);
+  if (!value) throw new Error(`staff mail data key version ${version} unavailable`);
+  return value;
+}
+
+export function encryptStaffMailPayload(
+  payload: MailPayload,
+  version = currentKeyVersion(),
+): Buffer {
   const iv = randomBytes(12);
-  const cipher = createCipheriv(ALGORITHM, key(), iv);
+  const cipher = createCipheriv(ALGORITHM, key(version), iv);
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), "utf8"), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), encrypted]);
 }
 
-function decryptStaffMailPayload(payload: Buffer): MailPayload {
+function decryptStaffMailPayload(payload: Buffer, version: number): MailPayload {
   const iv = payload.subarray(0, 12);
   const tag = payload.subarray(12, 28);
-  const decipher = createDecipheriv(ALGORITHM, key(), iv);
+  const decipher = createDecipheriv(ALGORITHM, key(version), iv);
   decipher.setAuthTag(tag);
   return JSON.parse(
     Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString("utf8"),
   ) as MailPayload;
+}
+
+export function rewrapStaffMailPayload(payload: Buffer, fromVersion: number): Buffer {
+  return encryptStaffMailPayload(decryptStaffMailPayload(payload, fromVersion));
 }
 
 export async function enqueueStaffInviteMail(
@@ -45,7 +71,7 @@ export async function enqueueStaffInviteMail(
     tokenId: input.tokenId,
     idempotencyKey: input.idempotencyKey,
     payload: encryptStaffMailPayload(input.email),
-    keyVersion: KEY_VERSION,
+    keyVersion: currentKeyVersion(),
   });
 }
 
@@ -83,7 +109,14 @@ async function terminalFailure(
       );
     await tx
       .update(staffMailOutbox)
-      .set({ status: "failed", payload: null, lastErrorCode: errorCode, updatedAt: now })
+      .set({
+        status: "failed",
+        payload: null,
+        leaseId: null,
+        leaseUntil: null,
+        lastErrorCode: errorCode,
+        updatedAt: now,
+      })
       .where(eq(staffMailOutbox.id, id));
     await tx.insert(auditLog).values({
       occurredAt: now,
@@ -96,35 +129,59 @@ async function terminalFailure(
   });
 }
 
-/** Claim and deliver pending invite mail. Safe for multiple workers through row locks. */
+/** Claim and deliver pending invite mail. Lease plus provider idempotency prevents duplicate sends. */
 export async function processStaffInviteMail(
   deps: { db?: Database; send?: typeof sendTransactionalEmail; now?: () => Date } = {},
 ): Promise<boolean> {
   const db = deps.db ?? defaultDb;
   const send = deps.send ?? sendTransactionalEmail;
   const now = deps.now?.() ?? new Date();
+  const leaseId = randomUUID();
   const [row] = await db.transaction(async (tx) => {
     const [candidate] = await tx
       .select({
         id: staffMailOutbox.id,
         payload: staffMailOutbox.payload,
         attempts: staffMailOutbox.attempts,
+        keyVersion: staffMailOutbox.keyVersion,
+        idempotencyKey: staffMailOutbox.idempotencyKey,
       })
       .from(staffMailOutbox)
-      .where(and(eq(staffMailOutbox.status, "pending"), lte(staffMailOutbox.availableAt, now)))
+      .where(
+        and(
+          lte(staffMailOutbox.availableAt, now),
+          or(
+            eq(staffMailOutbox.status, "pending"),
+            and(eq(staffMailOutbox.status, "in_flight"), lte(staffMailOutbox.leaseUntil, now)),
+          ),
+        ),
+      )
       .for("update", { skipLocked: true })
       .limit(1);
     if (!candidate?.payload) return [];
     await tx
       .update(staffMailOutbox)
-      .set({ attempts: sql`${staffMailOutbox.attempts} + 1`, updatedAt: now })
+      .set({
+        status: "in_flight",
+        leaseId,
+        leaseUntil: new Date(now.getTime() + LEASE_MS),
+        attempts: sql`${staffMailOutbox.attempts} + 1`,
+        updatedAt: now,
+      })
       .where(eq(staffMailOutbox.id, candidate.id));
-    return [candidate];
+    return [
+      {
+        ...candidate,
+        attempts: candidate.attempts + 1,
+      },
+    ];
   });
   if (!row?.payload) return false;
 
   try {
-    const result = await send(decryptStaffMailPayload(row.payload));
+    const result = await send(decryptStaffMailPayload(row.payload, row.keyVersion), {
+      idempotencyKey: row.idempotencyKey,
+    });
     const providerMessageId =
       result && typeof result === "object" ? (result.providerMessageId ?? null) : null;
     await db
@@ -132,22 +189,27 @@ export async function processStaffInviteMail(
       .set({
         status: "sent",
         payload: null,
+        leaseId: null,
+        leaseUntil: null,
         providerMessageId,
         updatedAt: now,
       })
-      .where(eq(staffMailOutbox.id, row.id));
+      .where(and(eq(staffMailOutbox.id, row.id), eq(staffMailOutbox.leaseId, leaseId)));
   } catch {
-    if (row.attempts + 1 >= MAX_ATTEMPTS) {
+    if (row.attempts >= MAX_ATTEMPTS) {
       await terminalFailure(row.id, "provider_rejected", now, db);
     } else {
       await db
         .update(staffMailOutbox)
         .set({
+          status: "pending",
+          leaseId: null,
+          leaseUntil: null,
           availableAt: new Date(now.getTime() + RETRY_DELAY_MS),
           lastErrorCode: "provider_rejected",
           updatedAt: now,
         })
-        .where(eq(staffMailOutbox.id, row.id));
+        .where(and(eq(staffMailOutbox.id, row.id), eq(staffMailOutbox.leaseId, leaseId)));
     }
   }
   return true;

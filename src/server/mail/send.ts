@@ -8,12 +8,16 @@ export interface TransactionalEmail {
 }
 
 export type TransactionalEmailResult = { providerMessageId?: string } | void;
+export type TransactionalEmailOptions = { idempotencyKey?: string };
 
 /**
  * Send one transactional message through Resend. Dry-run keeps CI and local
  * development network-free while exercising callers and template generation.
  */
-export async function sendTransactionalEmail(message: TransactionalEmail): Promise<TransactionalEmailResult> {
+export async function sendTransactionalEmail(
+  message: TransactionalEmail,
+  options: TransactionalEmailOptions = {},
+): Promise<TransactionalEmailResult> {
   if (env.MAIL_DRY_RUN) return {};
 
   const response = await fetch("https://api.resend.com/emails", {
@@ -21,6 +25,7 @@ export async function sendTransactionalEmail(message: TransactionalEmail): Promi
     headers: {
       Authorization: `Bearer ${env.MAIL_PROVIDER_API_KEY}`,
       "Content-Type": "application/json",
+      ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
     },
     body: JSON.stringify({
       from: `${env.MAIL_FROM_NAME} <${env.MAIL_FROM_ADDRESS}>`,

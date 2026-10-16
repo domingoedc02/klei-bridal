@@ -12,7 +12,9 @@ CREATE TABLE "staff_mail_outbox" (
   "available_at" timestamp with time zone DEFAULT now() NOT NULL,
   "created_at" timestamp with time zone DEFAULT now() NOT NULL,
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-  CONSTRAINT "staff_mail_outbox_status_check" CHECK ("status" IN ('pending', 'sent', 'failed', 'cancelled')),
+  "lease_id" text,
+  "lease_until" timestamp with time zone,
+  CONSTRAINT "staff_mail_outbox_status_check" CHECK ("status" IN ('pending', 'in_flight', 'sent', 'failed', 'cancelled')),
   CONSTRAINT "staff_mail_outbox_token_id_fk" FOREIGN KEY ("token_id") REFERENCES "password_reset_tokens"("id") ON DELETE CASCADE
 );
 --> statement-breakpoint
