@@ -1,11 +1,17 @@
 import "server-only";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 
 import { hashPassword } from "@/server/auth/password";
 import { assertPasswordAllowed } from "@/server/auth/password-policy";
 import { revokeAllSessionsForUser } from "@/server/auth/session";
 import { db as defaultDb, type Database } from "@/server/db/client";
 import { auditLog, staffUsers } from "@/server/db/schema";
+import {
+  createStaffInviteLifecycle,
+  getStaffInviteState,
+  resendStaffInvite,
+  type StaffInviteState,
+} from "@/server/services/staff-invite";
 import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
@@ -42,60 +48,22 @@ export async function createStaff(
   db: Database = defaultDb,
 ) {
   const email = input.email.trim().toLowerCase();
-  const policy = await assertPasswordAllowed(input.password, { email });
-  if (!policy.ok) {
-    if (policy.reason === "weak_password") {
-      throw new PipelineError(422, "VALIDATION_ERROR", "Check the highlighted fields.", {
-        fields: { password: "Choose a longer password." },
-      });
-    }
-    if (policy.reason === "password_too_common") {
-      throw new PipelineError(422, "PASSWORD_TOO_COMMON", "Choose a less common password.", {
-        fields: { password: "Choose a less common password." },
-      });
-    }
-    throw new PipelineError(
-      503,
-      "SERVICE_UNAVAILABLE",
-      "Password policy is temporarily unavailable.",
-    );
-  }
-
-  const passwordHash = await hashPassword(input.password);
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + TEMP_PASSWORD_TTL_MS);
 
-  return db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select({ id: staffUsers.id })
-      .from(staffUsers)
-      .where(sql`lower(${staffUsers.email}) = ${email}`)
-      .limit(1);
-    if (existing) throw new PipelineError(409, "CONFLICT", "This email is already in use.");
-
-    const [created] = await tx
-      .insert(staffUsers)
-      .values({
-        name: input.name.trim(),
-        email,
-        passwordHash,
-        tempPasswordExpiresAt: expiresAt,
-      })
-      .returning(columns);
-    if (!created) throw new Error("staff insert returned no row");
-
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: actor.staff.id,
-      action: "staff.create",
-      entityType: "staff_user",
-      entityId: created.id,
-      // Staff email is personal data; entityId already identifies this audit target.
-      detail: {},
-      ip: inetOrNull(ip),
-    });
-    return toJson(created, now);
+  const result = await createStaffInviteLifecycle({ name: input.name, email }, actor, ip, {
+    db,
+    now: () => now,
   });
+  return {
+    ...toJson(result.created, now),
+    password_change_pending: false,
+    invite: {
+      state: "pending",
+      expires_at: result.invite.expiresAt.toISOString(),
+      accepted_at: null,
+      delivery: "sent",
+    } satisfies NonNullable<StaffInviteState>,
+  };
 }
 
 /** GET /admin/staff (KBS-24-1): a studio of 2–5 people, so one unpaged list, active first. */
@@ -104,7 +72,31 @@ export async function listStaff(db: Database = defaultDb) {
     .select(columns)
     .from(staffUsers)
     .orderBy(desc(staffUsers.isActive), asc(staffUsers.name));
-  return { items: rows.map((row) => toJson(row)) };
+  const items = await Promise.all(
+    rows.map(async (row) => ({ ...toJson(row), invite: await getStaffInviteState(row.id, db) })),
+  );
+  return { items };
+}
+
+export async function resendStaffInvitation(
+  id: string,
+  input: { email?: string },
+  actor: Principal,
+  ip: string | null,
+  db: Database = defaultDb,
+) {
+  const email = input.email?.trim().toLowerCase();
+  const invite = await resendStaffInvite(id, actor, ip, { db, email });
+  return {
+    id,
+    email: invite.email,
+    invite: {
+      state: "pending" as const,
+      expires_at: invite.expiresAt.toISOString(),
+      accepted_at: null,
+      delivery: "sent" as const,
+    },
+  };
 }
 
 /**
