@@ -94,6 +94,20 @@ describe("GET /api/admin/staff", () => {
 });
 
 describe("POST /api/admin/staff", () => {
+  it("refuses invite issuance without an active staff session", async () => {
+    const email = `unauthorized-${randomUUID()}@kleibridal.test`;
+    const response = await create(
+      new NextRequest("http://localhost:3000/api/admin/staff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Unauthorized", email, password: "A-long-password-42!" }),
+      }),
+      {} as never,
+    );
+    expect(response.status).toBe(401);
+    expect(await sql`SELECT id FROM staff_users WHERE email = ${email}`).toHaveLength(0);
+  });
+
   it("creates with an Argon2id hash, 72-hour pending state, and no credential disclosure", async () => {
     const email = `created-${randomUUID()}@kleibridal.test`;
     const password = "A-long-temporary-password-42!";

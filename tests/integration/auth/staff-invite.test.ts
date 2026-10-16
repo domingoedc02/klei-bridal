@@ -89,4 +89,27 @@ describe("staff invite tokens", () => {
     await sql`UPDATE staff_users SET is_active = false WHERE id = ${id}`;
     expect(await issueStaffInvite(id, { db })).toBeNull();
   });
+
+  it("allows one concurrent redemption and leaves loser without partial mutation", async () => {
+    const id = await makeStaff(oldHash);
+    const now = new Date("2026-10-16T01:00:00Z");
+    const invite = await issueStaffInvite(id, { db, now: () => now });
+    const input = { token: invite!.rawToken, newPassword: NEW_PASSWORD, ip: null, userAgent: null };
+    const results = await Promise.all([
+      confirmStaffInvite(input, { db, now: () => now }),
+      confirmStaffInvite(input, { db, now: () => now }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, reason: "invalid_token" },
+    ]);
+    const [token] = await sql`
+      SELECT used_at FROM password_reset_tokens
+      WHERE staff_user_id = ${id} AND kind = 'invite'
+    `;
+    expect(token!.used_at).not.toBeNull();
+    const [staff] = await sql`SELECT password_hash FROM staff_users WHERE id = ${id}`;
+    expect(await verifyPassword(staff!.password_hash, NEW_PASSWORD)).toBe(true);
+  });
 });

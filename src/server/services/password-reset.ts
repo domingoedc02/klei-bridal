@@ -20,10 +20,14 @@ const INVITE_KIND = "invite";
 const RESET_KIND = "reset";
 const TOKEN_CLAIM_ABORT = Symbol("token_claim_abort");
 
+type MailSender = (
+  message: Parameters<typeof sendTransactionalEmail>[0],
+) => Promise<void | { providerMessageId?: string }>;
+
 export interface PasswordResetRequestDeps {
   db: Database;
   now?: () => Date;
-  sendEmail?: typeof sendTransactionalEmail;
+  sendEmail?: MailSender;
 }
 
 const defaultDeps: PasswordResetRequestDeps = { db: defaultDb };
