@@ -18,6 +18,7 @@ const RESET_TOKEN_TTL_MS = 30 * 60_000;
 const RESET_PATH = "/admin/reset-password";
 const INVITE_KIND = "invite";
 const RESET_KIND = "reset";
+const TOKEN_CLAIM_ABORT = Symbol("token_claim_abort");
 
 export interface PasswordResetRequestDeps {
   db: Database;
@@ -165,54 +166,58 @@ export async function confirmStaffInvite(
   const policy = await assertPasswordAllowed(input.newPassword, { email: candidate.email });
   if (!policy.ok) return { ok: false, reason: policy.reason };
   const passwordHash = await hashPassword(input.newPassword);
-  const result = await deps.db.transaction(async (tx) => {
-    const [activeStaff] = await tx
-      .select({ id: staffUsers.id })
-      .from(staffUsers)
-      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
-      .for("update");
-    if (!activeStaff) return { ok: false as const, reason: "invalid_token" as const };
+  try {
+    return await deps.db.transaction(async (tx) => {
+      const [activeStaff] = await tx
+        .select({ id: staffUsers.id })
+        .from(staffUsers)
+        .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+        .for("update");
+      if (!activeStaff) return { ok: false as const, reason: "invalid_token" as const };
 
-    const [claimed] = await tx
-      .update(passwordResetTokens)
-      .set({ usedAt: now })
-      .where(
-        and(
-          eq(passwordResetTokens.tokenHash, tokenHash),
-          eq(passwordResetTokens.kind, INVITE_KIND),
-          eq(passwordResetTokens.staffUserId, candidate.staffUserId),
-          isNull(passwordResetTokens.usedAt),
-          isNull(passwordResetTokens.revokedAt),
-          gt(passwordResetTokens.expiresAt, now),
-        ),
-      )
-      .returning({ staffUserId: passwordResetTokens.staffUserId });
-    if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
-    const updated = await tx
-      .update(staffUsers)
-      .set({
-        passwordHash,
-        tempPasswordExpiresAt: null,
-        failedLoginCount: 0,
-        lockedUntil: null,
-        updatedAt: now,
-      })
-      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
-      .returning({ id: staffUsers.id });
-    if (updated.length !== 1) return { ok: false as const, reason: "invalid_token" as const };
-    const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: null,
-      action: "staff.invite_accept",
-      ip: inetOrNull(input.ip),
-      entityType: "staff_user",
-      entityId: candidate.staffUserId,
-      detail: {},
+      const [claimed] = await tx
+        .update(passwordResetTokens)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResetTokens.tokenHash, tokenHash),
+            eq(passwordResetTokens.kind, INVITE_KIND),
+            eq(passwordResetTokens.staffUserId, candidate.staffUserId),
+            isNull(passwordResetTokens.usedAt),
+            isNull(passwordResetTokens.revokedAt),
+            gt(passwordResetTokens.expiresAt, now),
+          ),
+        )
+        .returning({ staffUserId: passwordResetTokens.staffUserId });
+      if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
+      const updated = await tx
+        .update(staffUsers)
+        .set({
+          passwordHash,
+          tempPasswordExpiresAt: null,
+          failedLoginCount: 0,
+          lockedUntil: null,
+          updatedAt: now,
+        })
+        .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+        .returning({ id: staffUsers.id });
+      if (updated.length !== 1) throw TOKEN_CLAIM_ABORT;
+      const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: null,
+        action: "staff.invite_accept",
+        ip: inetOrNull(input.ip),
+        entityType: "staff_user",
+        entityId: candidate.staffUserId,
+        detail: {},
+      });
+      return { ok: true as const, revokedSessions };
     });
-    return { ok: true as const, revokedSessions };
-  });
-  return result;
+  } catch (error) {
+    if (error === TOKEN_CLAIM_ABORT) return { ok: false, reason: "invalid_token" };
+    throw error;
+  }
 }
 
 export async function confirmPasswordReset(
@@ -245,39 +250,55 @@ export async function confirmPasswordReset(
   const policy = await assertPasswordAllowed(input.newPassword, { email: candidate.email });
   if (!policy.ok) return { ok: false, reason: policy.reason };
   const passwordHash = await hashPassword(input.newPassword);
-  const result = await deps.db.transaction(async (tx) => {
-    const [claimed] = await tx
-      .update(passwordResetTokens)
-      .set({ usedAt: now })
-      .where(
-        and(
-          eq(passwordResetTokens.tokenHash, tokenHash),
-          eq(passwordResetTokens.kind, candidate.kind),
-          eq(passwordResetTokens.staffUserId, candidate.staffUserId),
-          isNull(passwordResetTokens.usedAt),
-          isNull(passwordResetTokens.revokedAt),
-          gt(passwordResetTokens.expiresAt, now),
-        ),
-      )
-      .returning({ staffUserId: passwordResetTokens.staffUserId });
-    if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
+  let result: ConfirmPasswordResetResult;
+  try {
+    result = await deps.db.transaction(async (tx) => {
+      const [activeStaff] = await tx
+        .select({ id: staffUsers.id })
+        .from(staffUsers)
+        .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+        .for("update");
+      if (!activeStaff) return { ok: false as const, reason: "invalid_token" as const };
 
-    await tx
-      .update(staffUsers)
-      .set({ passwordHash, failedLoginCount: 0, lockedUntil: null, updatedAt: now })
-      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)));
-    const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
-    await tx.insert(auditLog).values({
-      occurredAt: now,
-      actorUserId: null,
-      action: "staff.password_reset",
-      ip: inetOrNull(input.ip),
-      entityType: "staff_user",
-      entityId: candidate.staffUserId,
-      detail: { revoked_sessions: revokedSessions },
+      const [claimed] = await tx
+        .update(passwordResetTokens)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResetTokens.tokenHash, tokenHash),
+            eq(passwordResetTokens.kind, candidate.kind),
+            eq(passwordResetTokens.staffUserId, candidate.staffUserId),
+            isNull(passwordResetTokens.usedAt),
+            isNull(passwordResetTokens.revokedAt),
+            gt(passwordResetTokens.expiresAt, now),
+          ),
+        )
+        .returning({ staffUserId: passwordResetTokens.staffUserId });
+      if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
+
+      const updated = await tx
+        .update(staffUsers)
+        .set({ passwordHash, failedLoginCount: 0, lockedUntil: null, updatedAt: now })
+        .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+        .returning({ id: staffUsers.id });
+      if (updated.length !== 1) throw TOKEN_CLAIM_ABORT;
+
+      const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
+      await tx.insert(auditLog).values({
+        occurredAt: now,
+        actorUserId: null,
+        action: "staff.password_reset",
+        ip: inetOrNull(input.ip),
+        entityType: "staff_user",
+        entityId: candidate.staffUserId,
+        detail: { revoked_sessions: revokedSessions },
+      });
+      return { ok: true as const, revokedSessions };
     });
-    return { ok: true as const, revokedSessions };
-  });
+  } catch (error) {
+    if (error === TOKEN_CLAIM_ABORT) return { ok: false, reason: "invalid_token" };
+    throw error;
+  }
 
   if (!result.ok) return result;
   try {
