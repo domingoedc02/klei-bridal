@@ -3,7 +3,11 @@ import { cookies } from "next/headers";
 import EnquiryForm from "@/components/public/EnquiryForm";
 import { logger } from "@/server/observability/logger";
 import { CSRF_COOKIE, validCsrfToken } from "@/server/pipeline/csrf";
-import { getLeadTimeSettings, parseLeadTimeSettings } from "@/server/services/enquiries";
+import {
+  getChatSettings,
+  getLeadTimeSettings,
+  parseLeadTimeSettings,
+} from "@/server/services/enquiries";
 import { isFormErrorCode, type FormErrorCode } from "@/shared/enquiryForm";
 
 export const metadata: Metadata = { title: "Enquire", robots: { index: false, follow: false } };
@@ -26,6 +30,10 @@ export default async function EnquirePage({ searchParams }: { searchParams: Prom
     logger.error({ err }, "enquire: lead-time settings unavailable, using defaults");
     return parseLeadTimeSettings({});
   });
+  const chatSettings = await getChatSettings().catch((err: unknown) => {
+    logger.error({ err }, "enquire: chat settings unavailable, using no chat hand-offs");
+    return { messengerPage: null, whatsappNumber: null, viberNumber: null };
+  });
   return (
     <main>
       <EnquiryForm
@@ -33,6 +41,7 @@ export default async function EnquirePage({ searchParams }: { searchParams: Prom
         csrfToken={csrfToken}
         serverError={errorCode}
         errorFields={typeof fields === "string" ? fields : ""}
+        chatSettings={chatSettings}
       />
     </main>
   );

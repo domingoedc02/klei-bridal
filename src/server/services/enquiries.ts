@@ -150,6 +150,36 @@ export async function getLeadTimeSettings(
   return parseLeadTimeSettings(Object.fromEntries(rows.map((r) => [r.key, r.value])));
 }
 
+export interface ChatSettings {
+  messengerPage: string | null;
+  whatsappNumber: string | null;
+  viberNumber: string | null;
+}
+
+/** Public hand-off settings. Empty values mean channel is not configured. */
+export async function getChatSettings(
+  tx: Pick<Database, "select"> = defaultDb,
+): Promise<ChatSettings> {
+  const rows = await tx
+    .select({ key: settings.key, value: settings.value })
+    .from(settings)
+    .where(
+      inArray(settings.key, [
+        "studio_facebook_page",
+        "studio_whatsapp_number",
+        "studio_viber_number",
+      ]),
+    );
+  const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  const text = (value: unknown) =>
+    typeof value === "string" && value.trim() ? value.trim() : null;
+  return {
+    messengerPage: text(values.studio_facebook_page),
+    whatsappNumber: text(values.studio_whatsapp_number),
+    viberNumber: text(values.studio_viber_number),
+  };
+}
+
 /**
  * One transaction: dedupe, re-validate gowns, compute the band, insert the
  * enquiry and its immutable gown snapshot. A duplicate (same email, same gown

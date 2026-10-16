@@ -16,6 +16,9 @@ import {
   type FormErrorCode,
 } from "@/shared/enquiryForm";
 import { checkWeddingDate, type LeadTimeSettings, type WeddingDateCheck } from "@/shared/leadtime";
+import ConfirmationActions, {
+  type ConfirmationData,
+} from "@/components/public/ConfirmationActions";
 
 const emptyContact: ContactDetails = { firstName: "", lastName: "", contactNumber: "", email: "" };
 
@@ -33,6 +36,11 @@ function csrfCookie(): string | undefined {
 
 interface EnquiryFormProps {
   leadTime: LeadTimeSettings;
+  chatSettings: {
+    messengerPage: string | null;
+    whatsappNumber: string | null;
+    viberNumber: string | null;
+  };
   /** Signed CSRF cookie value, rendered as the hidden field for native (no-JS) posts. */
   csrfToken?: string;
   /** Allowlisted `?error=` from a no-JS redirect (KBS-89). */
@@ -43,6 +51,7 @@ interface EnquiryFormProps {
 
 export default function EnquiryForm({
   leadTime,
+  chatSettings,
   csrfToken = "",
   serverError = null,
   errorFields = "",
@@ -64,6 +73,7 @@ export default function EnquiryForm({
   );
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [confirmation, setConfirmation] = useState<ConfirmationData | null>(null);
   // Native required/type/maxLength checks stay on until hydration, so a no-JS
   // or pre-hydration submit still catches blanks before the server round trip.
   const [hydrated, setHydrated] = useState(false);
@@ -134,6 +144,23 @@ export default function EnquiryForm({
         }
         throw new Error("We could not send your enquiry. Please check your details and try again.");
       }
+      const result = (await response.json().catch(() => null)) as {
+        reference?: string;
+        short_link_url?: string | null;
+      } | null;
+      if (result?.reference) {
+        setConfirmation({
+          reference: result.reference,
+          short_link_url: result.short_link_url ?? null,
+          first_name: String(values.first_name ?? ""),
+          last_name: String(values.last_name ?? ""),
+          wedding_date: String(values.wedding_date ?? ""),
+          gowns: gowns.slice(),
+          messenger_page: chatSettings.messengerPage,
+          whatsapp_number: chatSettings.whatsappNumber,
+          viber_number: chatSettings.viberNumber,
+        });
+      }
       try {
         window.localStorage.setItem(
           "kbs.contact.v1",
@@ -181,6 +208,7 @@ export default function EnquiryForm({
       <section className="enquiry-success" aria-live="polite">
         <h1>Thank you</h1>
         <p>Your enquiry was sent. We will be in touch soon.</p>
+        {confirmation ? <ConfirmationActions data={confirmation} /> : null}
       </section>
     );
 
