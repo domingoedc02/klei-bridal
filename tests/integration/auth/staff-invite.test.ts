@@ -91,6 +91,52 @@ describe("staff invite tokens", () => {
     expect(await issueStaffInvite(id, { db })).toBeNull();
   });
 
+  it("rolls back token, password, sessions, and audit when update claims zero rows", async () => {
+    const id = await makeStaff(oldHash);
+    const sessionA = await createSession(db, { staffUserId: id, ip: null, userAgent: "rollback-a" });
+    const sessionB = await createSession(db, { staffUserId: id, ip: null, userAgent: "rollback-b" });
+    const now = new Date("2026-10-16T00:30:00Z");
+    const invite = await issueStaffInvite(id, { db, now: () => now });
+    await sql`
+      CREATE OR REPLACE FUNCTION kbs_test_skip_staff_update() RETURNS trigger AS $fn$
+      BEGIN
+        IF OLD.id::text = TG_ARGV[0] THEN RETURN NULL; END IF;
+        RETURN NEW;
+      END;
+      $fn$ LANGUAGE plpgsql
+    `;
+    await sql`
+      CREATE TRIGGER kbs_test_skip_staff_update
+      BEFORE UPDATE ON staff_users FOR EACH ROW
+      EXECUTE FUNCTION kbs_test_skip_staff_update(${id})
+    `;
+    try {
+      await expect(
+        confirmStaffInvite(
+          { token: invite!.rawToken, newPassword: NEW_PASSWORD, ip: null, userAgent: null },
+          { db, now: () => now },
+        ),
+      ).resolves.toEqual({ ok: false, reason: "invalid_token" });
+    } finally {
+      await sql`DROP TRIGGER IF EXISTS kbs_test_skip_staff_update ON staff_users`;
+      await sql`DROP FUNCTION IF EXISTS kbs_test_skip_staff_update()`;
+    }
+    const [token] = await sql`
+      SELECT used_at FROM password_reset_tokens WHERE staff_user_id = ${id} AND kind = 'invite'
+    `;
+    const [staff] = await sql`SELECT password_hash FROM staff_users WHERE id = ${id}`;
+    const sessions = await sql`SELECT revoked_at FROM sessions WHERE staff_user_id = ${id}`;
+    const audit = await sql`
+      SELECT action FROM audit_log WHERE entity_id = ${id} AND action = 'staff.invite_accept'
+    `;
+    expect(token?.used_at).toBeNull();
+    expect(await verifyPassword(staff!.password_hash, OLD_PASSWORD)).toBe(true);
+    expect(sessions).toHaveLength(2);
+    expect(sessions.every((row) => row.revoked_at === null)).toBe(true);
+    expect(audit).toHaveLength(0);
+    expect(sessionA.sessionId).not.toBe(sessionB.sessionId);
+  });
+
   it("allows one concurrent redemption and leaves loser without partial mutation", async () => {
     const id = await makeStaff(oldHash);
     const sessionA = await createSession(db, { staffUserId: id, ip: null, userAgent: "a" });
