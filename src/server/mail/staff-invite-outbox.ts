@@ -59,8 +59,30 @@ function decryptStaffMailPayload(payload: Buffer, version: number): MailPayload 
   ) as MailPayload;
 }
 
-export function rewrapStaffMailPayload(payload: Buffer, fromVersion: number): Buffer {
-  return encryptStaffMailPayload(decryptStaffMailPayload(payload, fromVersion));
+/** Re-encrypt one outbox row under current key inside one transaction. */
+export async function rewrapStaffMailPayload(db: Database, outboxId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({
+        id: staffMailOutbox.id,
+        payload: staffMailOutbox.payload,
+        keyVersion: staffMailOutbox.keyVersion,
+      })
+      .from(staffMailOutbox)
+      .where(eq(staffMailOutbox.id, outboxId))
+      .for("update");
+    if (!row?.payload || row.keyVersion === currentKeyVersion()) return false;
+
+    await tx
+      .update(staffMailOutbox)
+      .set({
+        payload: encryptStaffMailPayload(decryptStaffMailPayload(row.payload, row.keyVersion)),
+        keyVersion: currentKeyVersion(),
+        updatedAt: new Date(),
+      })
+      .where(eq(staffMailOutbox.id, row.id));
+    return true;
+  });
 }
 
 export async function enqueueStaffInviteMail(

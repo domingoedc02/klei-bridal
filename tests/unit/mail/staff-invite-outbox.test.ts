@@ -57,11 +57,34 @@ function pendingDb(attempts = 0) {
 }
 
 describe("staff invite mail outbox", () => {
-  it("rewraps payload with current key version", () => {
-    const original = encryptStaffMailPayload(payload, 1);
-    const rotated = rewrapStaffMailPayload(original, 1);
-    expect(rotated).not.toEqual(original);
-    expect(rotated).toHaveLength(original.length);
+  it("persists rewrapped payload and current key version atomically", async () => {
+    const original = encryptStaffMailPayload(payload, 2);
+    const { update, set, where } = updateDb();
+    const tx = {
+      select: vi.fn(() => ({
+        from: () => ({
+          where: () => ({
+            for: async () => [{ id: "outbox-1", payload: original, keyVersion: 2 }],
+          }),
+        }),
+      })),
+      update,
+    };
+    const db = {
+      transaction: vi.fn(async (callback: (value: typeof tx) => Promise<boolean>) => callback(tx)),
+    } as never;
+
+    await expect(rewrapStaffMailPayload(db, "outbox-1")).resolves.toBe(true);
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({ keyVersion: 1, payload: expect.any(Buffer) }),
+    );
+    const updateValues = (set.mock as unknown as { calls: unknown[][] }).calls[0]?.[0] as
+      | { payload: Buffer }
+      | undefined;
+    expect(updateValues?.payload).not.toEqual(original);
+    expect(where).toHaveBeenCalledWith(expect.anything());
   });
   it("encrypts payload and does not retain plaintext token bytes", () => {
     const encrypted = encryptStaffMailPayload(payload);
