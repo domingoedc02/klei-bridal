@@ -166,6 +166,13 @@ export async function confirmStaffInvite(
   if (!policy.ok) return { ok: false, reason: policy.reason };
   const passwordHash = await hashPassword(input.newPassword);
   const result = await deps.db.transaction(async (tx) => {
+    const [activeStaff] = await tx
+      .select({ id: staffUsers.id })
+      .from(staffUsers)
+      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+      .for("update");
+    if (!activeStaff) return { ok: false as const, reason: "invalid_token" as const };
+
     const [claimed] = await tx
       .update(passwordResetTokens)
       .set({ usedAt: now })
@@ -181,7 +188,7 @@ export async function confirmStaffInvite(
       )
       .returning({ staffUserId: passwordResetTokens.staffUserId });
     if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
-    await tx
+    const updated = await tx
       .update(staffUsers)
       .set({
         passwordHash,
@@ -190,7 +197,10 @@ export async function confirmStaffInvite(
         lockedUntil: null,
         updatedAt: now,
       })
-      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)));
+      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)))
+      .returning({ id: staffUsers.id });
+    if (updated.length !== 1) return { ok: false as const, reason: "invalid_token" as const };
+    const revokedSessions = await revokeAllSessionsForUser(tx, candidate.staffUserId, now);
     await tx.insert(auditLog).values({
       occurredAt: now,
       actorUserId: null,
@@ -200,7 +210,7 @@ export async function confirmStaffInvite(
       entityId: candidate.staffUserId,
       detail: {},
     });
-    return { ok: true as const, revokedSessions: 0 };
+    return { ok: true as const, revokedSessions };
   });
   return result;
 }
