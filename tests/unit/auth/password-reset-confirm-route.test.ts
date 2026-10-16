@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   confirmPasswordReset: vi.fn(),
+  confirmStaffInvite: vi.fn(),
   validateSession: vi.fn(),
   hit: vi.fn(),
   counts: new Map<string, number>(),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/services/password-reset", () => ({
   confirmPasswordReset: mocks.confirmPasswordReset,
+  confirmStaffInvite: mocks.confirmStaffInvite,
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -54,6 +56,7 @@ function post(
 
 beforeEach(() => {
   mocks.confirmPasswordReset.mockReset();
+  mocks.confirmStaffInvite.mockReset().mockResolvedValue({ ok: false, reason: "invalid_token" });
   mocks.validateSession.mockReset().mockResolvedValue(null);
   mocks.hit.mockReset().mockImplementation(async (key: string, windowSec: number) => {
     const count = (mocks.counts.get(key) ?? 0) + 1;
@@ -86,7 +89,19 @@ describe("POST /api/auth/password-reset/confirm", () => {
     expect(body.error.code).toBe("RESET_TOKEN_INVALID");
     expect(body.error.message).toBe("This reset link is invalid or has expired.");
     expect(JSON.stringify(body)).not.toContain(TOKEN);
+    expect(mocks.confirmStaffInvite).toHaveBeenCalledOnce();
     expect(mocks.confirmPasswordReset).toHaveBeenCalledOnce();
+  });
+
+  it("accepts invite redemption through the same neutral route and returns session count", async () => {
+    mocks.confirmStaffInvite.mockResolvedValue({ ok: true, revokedSessions: 2 });
+
+    const response = await POST(post());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, revoked_sessions: 2 });
+    expect(mocks.confirmStaffInvite).toHaveBeenCalledOnce();
+    expect(mocks.confirmPasswordReset).not.toHaveBeenCalled();
   });
 
   it("rejects malformed token and password before calling reset service", async () => {

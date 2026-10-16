@@ -6,7 +6,7 @@ import { MIN_PASSWORD_LENGTH } from "@/server/services/auth";
 import { budgets } from "@/server/ratelimit/budgets";
 import { clientIp } from "@/server/ratelimit/client-ip";
 import { PipelineError, withPipeline } from "@/server/pipeline";
-import { confirmPasswordReset } from "@/server/services/password-reset";
+import { confirmPasswordReset, confirmStaffInvite } from "@/server/services/password-reset";
 import { isCrossOrigin } from "@/server/services/auth-http";
 
 export const runtime = "nodejs";
@@ -25,12 +25,18 @@ async function handler(request: NextRequest, context: { body: z.infer<typeof Con
     throw new PipelineError(403, "FORBIDDEN", "Cross-site request refused.");
   }
 
-  const result = await confirmPasswordReset({
+  const input = {
     token: context.body.token,
     newPassword: context.body.new_password,
     ip: clientIp(request.headers),
     userAgent: request.headers.get("user-agent"),
-  });
+  };
+  const invite = (await confirmStaffInvite(input)) ?? {
+    ok: false as const,
+    reason: "invalid_token" as const,
+  };
+  const result =
+    !invite.ok && invite.reason === "invalid_token" ? await confirmPasswordReset(input) : invite;
 
   if (!result.ok) {
     switch (result.reason) {
