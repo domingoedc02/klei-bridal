@@ -7,8 +7,6 @@ import { revokeAllSessionsForUser } from "@/server/auth/session";
 import { db as defaultDb, type Database } from "@/server/db/client";
 import { auditLog, staffUsers } from "@/server/db/schema";
 import { issueStaffInvite } from "@/server/services/staff-invite";
-import { staffInviteEmail } from "@/server/mail/staff-invite";
-import { sendTransactionalEmail } from "@/server/mail/send";
 import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
@@ -82,18 +80,6 @@ export async function createStaff(
     .then(async (created) => {
       const invite = await issueStaffInvite(created.id, { db, now: () => now });
       if (!invite) throw new PipelineError(404, "NOT_FOUND", "Staff account not found.");
-      try {
-        await sendTransactionalEmail({
-          to: invite.email,
-          ...staffInviteEmail({
-            name: invite.name,
-            token: invite.rawToken,
-            expiresAt: invite.expiresAt,
-          }),
-        });
-      } catch {
-        // Account remains passwordless; retry/resend flow handles delivery failure.
-      }
       return { ...created, password_change_pending: false };
     });
 }

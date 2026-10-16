@@ -6,6 +6,8 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db as defaultDb } from "@/server/db/client";
 import type { Database } from "@/server/db/client";
 import { passwordResetTokens, staffUsers } from "@/server/db/schema";
+import { enqueueStaffInviteMail } from "@/server/mail/staff-invite-outbox";
+import { staffInviteEmail } from "@/server/mail/staff-invite";
 
 const INVITE_TOKEN_BYTES = 32;
 export const INVITE_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -58,12 +60,24 @@ export async function issueStaffInvite(
           isNull(passwordResetTokens.revokedAt),
         ),
       );
-    await tx.insert(passwordResetTokens).values({
-      staffUserId,
-      kind: "invite",
-      tokenHash: token.hash,
-      expiresAt,
-      createdAt: now,
+    const [tokenRow] = await tx
+      .insert(passwordResetTokens)
+      .values({
+        staffUserId,
+        kind: "invite",
+        tokenHash: token.hash,
+        expiresAt,
+        createdAt: now,
+      })
+      .returning({ id: passwordResetTokens.id });
+    if (!tokenRow) throw new Error("invite token insert returned no row");
+    await enqueueStaffInviteMail(tx, {
+      tokenId: tokenRow.id,
+      idempotencyKey: `staff-invite-${token.hash}`,
+      email: {
+        to: staff.email,
+        ...staffInviteEmail({ name: staff.name, token: token.raw, expiresAt }),
+      },
     });
 
     return {
