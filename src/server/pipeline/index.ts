@@ -16,8 +16,8 @@ import {
   isStateChanging,
   mintCsrfToken,
   requireCsrf,
-  requireSameOrigin,
 } from "./csrf";
+import { requireChannelOrigin } from "./origin-check";
 import { requireStaff, type Principal } from "./authorization";
 import { readJson } from "./body-limit";
 import { validate } from "./validation";
@@ -147,7 +147,7 @@ export function withPipeline<C>(
         requireStaff(principal, { passwordChangeExempt: options.allowPendingPasswordChange });
       }
       if (isStateChanging(request) && options.csrf !== false) {
-        if (isChannelBeacon(request)) requireSameOrigin(request, true);
+        if (isChannelBeacon(request)) requireChannelOrigin(request);
         else requireCsrf(request);
       }
 

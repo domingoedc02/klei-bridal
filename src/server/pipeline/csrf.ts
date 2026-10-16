@@ -62,7 +62,7 @@ export function isStateChanging(request: Request): boolean {
 
 /** Exactly one documented sendBeacon exception. */
 export function isChannelBeacon(request: Request): boolean {
-  return /^\/e\/[^/]+\/channel\/?$/.test(new URL(request.url).pathname);
+  return /^\/(?:api\/)?e\/[^/]+\/channel\/?$/.test(new URL(request.url).pathname);
 }
 
 export function requireCsrf(request: Request): void {
