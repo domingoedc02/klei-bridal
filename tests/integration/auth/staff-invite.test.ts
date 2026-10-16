@@ -4,6 +4,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { hashPassword, verifyPassword } from "@/server/auth/password";
+import { createSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { confirmStaffInvite } from "@/server/services/password-reset";
 import { INVITE_TOKEN_TTL_MS, issueStaffInvite } from "@/server/services/staff-invite";
@@ -92,6 +93,8 @@ describe("staff invite tokens", () => {
 
   it("allows one concurrent redemption and leaves loser without partial mutation", async () => {
     const id = await makeStaff(oldHash);
+    const sessionA = await createSession(db, { staffUserId: id, ip: null, userAgent: "a" });
+    const sessionB = await createSession(db, { staffUserId: id, ip: null, userAgent: "b" });
     const now = new Date("2026-10-16T01:00:00Z");
     const invite = await issueStaffInvite(id, { db, now: () => now });
     const input = { token: invite!.rawToken, newPassword: NEW_PASSWORD, ip: null, userAgent: null };
@@ -111,5 +114,13 @@ describe("staff invite tokens", () => {
     expect(token!.used_at).not.toBeNull();
     const [staff] = await sql`SELECT password_hash FROM staff_users WHERE id = ${id}`;
     expect(await verifyPassword(staff!.password_hash, NEW_PASSWORD)).toBe(true);
+    const sessions = await sql`SELECT id, revoked_at FROM sessions WHERE staff_user_id = ${id} ORDER BY id`;
+    expect(sessions).toHaveLength(2);
+    expect(sessions.every((row) => row.revoked_at !== null)).toBe(true);
+    const audit = await sql`
+      SELECT action FROM audit_log WHERE entity_id = ${id} AND action = 'staff.invite_accept'
+    `;
+    expect(audit).toHaveLength(1);
+    expect(sessionA.sessionId).not.toBe(sessionB.sessionId);
   });
 });
