@@ -149,6 +149,22 @@ describe("DELETE /api/admin/gowns/:id/images/:imageId", () => {
     expect(audit!.detail).toMatchObject({ image_id: ids[0], new_hero_image_id: ids[2] });
   });
 
+  it("409s when the hero of a published gown is deleted, and changes nothing", async () => {
+    const { gown, ids } = await gownWith(2, "published");
+    const res = await doDelete(gown, ids[0]!);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe("CONFLICT");
+    expect(body.error.message).toBe("Choose another hero photo first.");
+    const left = await rows(gown);
+    expect(left.map((r) => [r.id, r.is_hero])).toEqual([
+      [ids[0], true],
+      [ids[1], false],
+    ]);
+    expect(await exists(ids[0]!)).toBe(true);
+    expect(await audits("gown_image.delete", gown)).toHaveLength(0);
+  });
+
   it("409s for the last image on a published gown and keeps it", async () => {
     const { gown, ids } = await gownWith(1, "published");
     const res = await doDelete(gown, ids[0]!);

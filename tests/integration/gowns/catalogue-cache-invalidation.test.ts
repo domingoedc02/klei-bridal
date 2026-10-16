@@ -166,6 +166,8 @@ describe("catalogue cache mutation invalidation", () => {
       INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
       VALUES (${image}, ${gown.id}, 0, true, ${`cache/${image}.jpg`}, 10, 10)
     `;
+    // KBS-117: publish needs a hero whose encode is done.
+    await sql`INSERT INTO image_jobs (id, gown_image_id, status) VALUES (${randomUUID()}, ${image}, 'done')`;
     await publishAdminGown(gown.id, actor, db);
     const epoch = catalogueCache.epoch;
     await publishAdminGown(gown.id, actor, db);
