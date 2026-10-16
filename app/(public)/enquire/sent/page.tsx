@@ -20,6 +20,7 @@ export default async function EnquirySentPage({
   return (
     <main className="sent">
       <h1>Thank you</h1>
+      <meta name="robots" content="noindex,nofollow" />
       <p>Your enquiry was sent. We will be in touch soon.</p>
       {reference ? (
         <p>
@@ -27,6 +28,7 @@ export default async function EnquirySentPage({
           enquiry.
         </p>
       ) : null}
+      <p>A copy of your enquiry was also emailed to you.</p>
       <p>
         <Link href="/gowns">Keep browsing gowns</Link>
       </p>

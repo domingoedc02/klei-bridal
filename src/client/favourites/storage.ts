@@ -40,6 +40,26 @@ export function removeFavourite(id: string): void {
   }
 }
 
+export const FAVOURITE_NAMES_KEY = "kbs.favourite-names.v1";
+
+/**
+ * Display names for favourited ids, `{ [id]: name }`. Nothing writes this yet
+ * (hearting is KBS-14), so today it yields null and chat hand-offs omit themselves.
+ * Untrusted: chatHandoff re-validates. Null when any id lacks a name.
+ */
+export function getFavouriteNames(ids: string[]): string[] | null {
+  const names = read<Record<string, unknown>>(
+    FAVOURITE_NAMES_KEY,
+    {},
+    (value): value is Record<string, unknown> =>
+      typeof value === "object" && value !== null && !Array.isArray(value),
+  );
+  const picked = ids.map((id) =>
+    Object.prototype.hasOwnProperty.call(names, id) ? names[id] : undefined,
+  );
+  return picked.every((name): name is string => typeof name === "string") ? picked : null;
+}
+
 export function getContactDetails(): ContactDetails {
   return read<ContactDetails>(
     CONTACT_KEY,

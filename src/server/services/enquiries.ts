@@ -14,6 +14,7 @@ import { enquiries, enquiryGowns, gowns, settings } from "@/server/db/schema";
 import { logger } from "@/server/observability/logger";
 import { captureError } from "@/server/observability/sentry";
 import { PipelineError } from "@/server/pipeline/errors";
+import type { ChatSettings } from "@/shared/chatHandoff";
 import { daysBetween, isIsoDate, isValidTimeZone, todayIn } from "@/shared/dates";
 import {
   DEFAULT_LEAD_TIME_RULE,
@@ -148,6 +149,29 @@ export async function getLeadTimeSettings(
       ]),
     );
   return parseLeadTimeSettings(Object.fromEntries(rows.map((r) => [r.key, r.value])));
+}
+
+/** Chat destinations (KBS-18). Empty/unset becomes null; shape is validated client-side. */
+export async function getChatSettings(
+  tx: Pick<Database, "select"> = defaultDb,
+): Promise<ChatSettings> {
+  const rows = await tx
+    .select({ key: settings.key, value: settings.value })
+    .from(settings)
+    .where(
+      inArray(settings.key, [
+        "studio_facebook_page",
+        "studio_whatsapp_number",
+        "studio_viber_number",
+      ]),
+    );
+  const v = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const text = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : null);
+  return {
+    messengerPage: text(v.studio_facebook_page),
+    whatsappNumber: text(v.studio_whatsapp_number),
+    viberNumber: text(v.studio_viber_number),
+  };
 }
 
 /**
