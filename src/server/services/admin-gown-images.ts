@@ -335,7 +335,6 @@ export async function setGownHero(
   await afterCatalogueMutation(
     db.transaction(async (tx) => {
       await lockGown(tx, gownId);
-      await lockGown(tx, gownId);
       const [gown] = await tx
         .select({ status: gowns.status })
         .from(gowns)
