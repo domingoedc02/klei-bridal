@@ -38,7 +38,14 @@ describe("security header registry", () => {
     expect(securityHeadersFor(path)).toEqual(BASELINE);
   });
 
-  it.each(["/e/abc123", "/e/abc123/channel", "/e"])(
+  it.each([
+    "/e/abc123",
+    "/e/abc123/channel",
+    "/e",
+    "/api/e/abc123",
+    "/api/e/abc123/channel",
+    "/api/e",
+  ])(
     "overrides Referrer-Policy and adds X-Robots-Tag on %s",
     (path) => {
       expect(securityHeadersFor(path)).toEqual({

@@ -39,7 +39,8 @@ export const headerOverrides: readonly HeaderOverride[] = [
     // KBS-29 / spec/api: the enquiry short link must never leak its token
     // in a Referer and must never be indexed.
     reason: "enquiry short link /e/:token (KBS-29)",
-    matches: (pathname) => pathname === "/e" || pathname.startsWith("/e/"),
+    matches: (pathname) =>
+      pathname === "/e" || pathname.startsWith("/e/") || pathname === "/api/e" || pathname.startsWith("/api/e/"),
     headers: {
       "referrer-policy": "no-referrer",
       "cache-control": "no-store",

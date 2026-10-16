@@ -17,9 +17,9 @@ import {
   mintCsrfToken,
   requireCsrf,
   requireFormCsrf,
-  requireSameOrigin,
 } from "./csrf";
 import { formErrorResponse, isFormRequest, readForm, type FormOptions } from "./form";
+import { requireChannelOrigin } from "./origin-check";
 import { requireStaff, type Principal } from "./authorization";
 import { readJson } from "./body-limit";
 import { validate } from "./validation";
@@ -163,6 +163,7 @@ export function withPipeline<C>(
       if (options.auth === "staff") {
         requireStaff(principal, { passwordChangeExempt: options.allowPendingPasswordChange });
       }
+<<<<<<< HEAD
       let formBody: Record<string, string | string[]> | undefined;
       if (viaForm) {
         const form = await readForm(limited, options.form!);
@@ -170,6 +171,10 @@ export function withPipeline<C>(
         formBody = form.body;
       } else if (isStateChanging(request) && options.csrf !== false) {
         if (isChannelBeacon(request)) requireSameOrigin(request, true);
+=======
+      if (isStateChanging(request) && options.csrf !== false) {
+        if (isChannelBeacon(request)) requireChannelOrigin(request);
+>>>>>>> origin/main
         else requireCsrf(request);
       }
 
