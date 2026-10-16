@@ -47,6 +47,16 @@ export const headerOverrides: readonly HeaderOverride[] = [
     },
   },
   {
+    // KBS-89: the form carries a per-visitor CSRF token and the confirmation
+    // carries her reference — neither may be cached or indexed.
+    reason: "enquiry form and its confirmation (KBS-89)",
+    matches: (pathname) => pathname === "/enquire" || pathname === "/enquire/sent",
+    headers: {
+      "cache-control": "private, no-store",
+      "x-robots-tag": "noindex, nofollow",
+    },
+  },
+  {
     reason: "admin reset password token (KBS-91)",
     matches: (pathname) => pathname === "/admin/reset-password",
     headers: {

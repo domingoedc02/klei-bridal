@@ -9,11 +9,17 @@ import {
   type ContactDetails,
 } from "@/client/favourites/storage";
 import { todayIn } from "@/shared/dates";
+import {
+  ENQUIRY_FIELD_LABELS,
+  FORM_ERROR_MESSAGES,
+  isEnquiryFieldName,
+  type FormErrorCode,
+} from "@/shared/enquiryForm";
 import { checkWeddingDate, type LeadTimeSettings, type WeddingDateCheck } from "@/shared/leadtime";
 
 const emptyContact: ContactDetails = { firstName: "", lastName: "", contactNumber: "", email: "" };
 
-function csrfToken(): string | undefined {
+function csrfCookie(): string | undefined {
   try {
     return document.cookie
       .split(";")
@@ -25,18 +31,46 @@ function csrfToken(): string | undefined {
   }
 }
 
-export default function EnquiryForm({ leadTime }: { leadTime: LeadTimeSettings }) {
+interface EnquiryFormProps {
+  leadTime: LeadTimeSettings;
+  /** Signed CSRF cookie value, rendered as the hidden field for native (no-JS) posts. */
+  csrfToken?: string;
+  /** Allowlisted `?error=` from a no-JS redirect (KBS-89). */
+  serverError?: FormErrorCode | null;
+  /** Comma-separated `?fields=` from the same redirect; filtered against the allowlist. */
+  errorFields?: string;
+}
+
+export default function EnquiryForm({
+  leadTime,
+  csrfToken = "",
+  serverError = null,
+  errorFields = "",
+}: EnquiryFormProps) {
+  const flaggedFields = errorFields
+    .split(",")
+    .filter(isEnquiryFieldName)
+    .map((field) => ENQUIRY_FIELD_LABELS[field]);
   const [contact, setContact] = useState<ContactDetails>(emptyContact);
   const [gowns, setGowns] = useState<string[]>([]);
   const [dateCheck, setDateCheck] = useState<WeddingDateCheck | null>(null);
   // A >4-year date is sent on the second press, after she has seen the year note.
   const [farConfirmed, setFarConfirmed] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    serverError
+      ? FORM_ERROR_MESSAGES[serverError] +
+          (flaggedFields.length ? ` Check: ${flaggedFields.join(", ")}.` : "")
+      : null,
+  );
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
+  // Native required/type/maxLength checks stay on until hydration, so a no-JS
+  // or pre-hydration submit still catches blanks before the server round trip.
+  const [hydrated, setHydrated] = useState(false);
   const dateRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setHydrated(true);
     setContact(getContactDetails());
     setGowns(getFavouriteIds());
   }, []);
@@ -77,7 +111,7 @@ export default function EnquiryForm({ leadTime }: { leadTime: LeadTimeSettings }
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(csrfToken() ? { "x-csrf-token": csrfToken()! } : {}),
+          ...(csrfCookie() ? { "x-csrf-token": csrfCookie()! } : {}),
         },
         body: JSON.stringify({
           first_name: values.first_name,
@@ -156,8 +190,9 @@ export default function EnquiryForm({ leadTime }: { leadTime: LeadTimeSettings }
       method="post"
       action="/api/enquiries"
       onSubmit={(event) => void submit(event)}
-      noValidate
+      noValidate={hydrated}
     >
+      <input type="hidden" name="csrf_token" value={csrfToken} />
       <fieldset>
         <legend>Your details</legend>
         <div className="fields">

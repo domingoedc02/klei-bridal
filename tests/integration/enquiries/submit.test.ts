@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { POST } from "../../../app/api/enquiries/route";
 import { middleware } from "../../../middleware";
 import { env } from "@/config/env";
+import { mintCsrfToken } from "@/server/pipeline/csrf";
 import { db } from "@/server/db/client";
 import { submitEnquiry, type EnquiryInput } from "@/server/services/enquiries";
 import { todayIn } from "@/shared/dates";
@@ -91,6 +92,169 @@ afterAll(async () => {
   await sql`DELETE FROM gowns WHERE id = ANY(${gownIds}::uuid[])`;
   await sql.end();
   await db.$client.end();
+});
+
+/** KBS-89: native urlencoded post (no JS / before hydration), decision/enquiry-nojs-csrf. */
+function formPost(
+  body: EnquiryInput,
+  overrides: { headers?: Record<string, string>; token?: string | null } = {},
+) {
+  const token = mintCsrfToken();
+  const params = new URLSearchParams({
+    first_name: body.first_name,
+    last_name: body.last_name,
+    contact_number: body.contact_number,
+    email: body.email,
+    wedding_date: body.wedding_date,
+    message: body.message ?? "",
+  });
+  for (const id of body.gown_ids) params.append("gown_ids", id);
+  const field = overrides.token === undefined ? token : overrides.token;
+  if (field !== null) params.set("csrf_token", field);
+  return POST(
+    new NextRequest("http://localhost:3000/api/enquiries", {
+      method: "POST",
+      headers: {
+        origin: new URL(env.SITE_URL).origin,
+        cookie: `kbs_csrf=${token}`,
+        "content-type": "application/x-www-form-urlencoded",
+        "x-real-ip": ip(),
+        ...overrides.headers,
+      },
+      body: params.toString(),
+    }),
+  );
+}
+
+describe("POST /api/enquiries as a native form (KBS-89)", () => {
+  it("first visit: GET /enquire cookie + hidden field -> one stored enquiry, 303 to /enquire/sent?ref=", async () => {
+    const page = middleware(new NextRequest("http://localhost:3000/enquire"));
+    const token = /kbs_csrf=([^;]+)/.exec(page.headers.get("set-cookie") ?? "")?.[1];
+    expect(token).toBeTruthy();
+    const body = input();
+    const res = await POST(
+      new NextRequest("http://localhost:3000/api/enquiries", {
+        method: "POST",
+        headers: {
+          origin: new URL(env.SITE_URL).origin,
+          cookie: `kbs_csrf=${token}`,
+          "content-type": "application/x-www-form-urlencoded",
+          "x-real-ip": ip(),
+        },
+        body: new URLSearchParams({
+          first_name: body.first_name,
+          last_name: body.last_name,
+          contact_number: body.contact_number,
+          email: body.email,
+          wedding_date: body.wedding_date,
+          message: "",
+          csrf_token: token,
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(303);
+    const [row] = await rowsFor(body.email);
+    expect(row).toBeTruthy();
+    expect(res.headers.get("location")).toBe(`/enquire/sent?ref=${row!.reference}`);
+    expect(await rowsFor(body.email)).toHaveLength(1);
+    expect(row!.message).toBeNull();
+    expect(await sql`SELECT 1 FROM enquiry_gowns WHERE enquiry_id = ${row!.id}`).toHaveLength(0);
+  });
+
+  it("stores repeated gown_ids", async () => {
+    const [a, b] = [await gown(), await gown()];
+    const body = input({ gown_ids: [a, b] });
+    expect((await formPost(body)).status).toBe(303);
+    const [row] = await rowsFor(body.email);
+    expect(await sql`SELECT 1 FROM enquiry_gowns WHERE enquiry_id = ${row!.id}`).toHaveLength(2);
+  });
+
+  it("an idempotent duplicate 303s to the same confirmation and writes no second row", async () => {
+    const body = input();
+    const first = await formPost(body);
+    const second = await formPost(body);
+    expect(second.status).toBe(303);
+    expect(second.headers.get("location")).toBe(first.headers.get("location"));
+    expect(await rowsFor(body.email)).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing field token", { token: null }],
+    ["mismatched field token", { token: mintCsrfToken() }],
+    ["no Origin", { headers: { origin: "" } }],
+    ["cross-site Origin", { headers: { origin: "https://evil.example" } }],
+    ["Sec-Fetch-Site: cross-site", { headers: { "sec-fetch-site": "cross-site" } }],
+  ] as const)("%s: writes nothing, 303 to the fixed error state", async (_name, overrides) => {
+    const body = input();
+    const res = await formPost(body, overrides as never);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/enquire?error=csrf");
+    expect(await rowsFor(body.email)).toHaveLength(0);
+  });
+
+  it("validation: 303 with allowlisted field names only, no PII in the URL", async () => {
+    const body = input({ contact_number: "not a number" });
+    const res = await formPost(body);
+    expect(res.status).toBe(303);
+    const location = res.headers.get("location")!;
+    expect(location).toBe("/enquire?error=invalid&fields=contact_number");
+    expect(location).not.toContain(encodeURIComponent(body.email));
+    expect(await rowsFor(body.email)).toHaveLength(0);
+  });
+
+  it("an unavailable gown 303s to the invalid state with fields=gown_ids, writing nothing", async () => {
+    const body = input({ gown_ids: [await gown("draft")] });
+    const res = await formPost(body);
+    expect(res.headers.get("location")).toBe("/enquire?error=invalid&fields=gown_ids");
+    expect(await rowsFor(body.email)).toHaveLength(0);
+  });
+
+  it("a hostile redirect-like or token-like field never reaches Location", async () => {
+    const body = input();
+    const res = await POST(
+      new NextRequest("http://localhost:3000/api/enquiries", {
+        method: "POST",
+        headers: {
+          ...csrfHeaders(),
+          "content-type": "application/x-www-form-urlencoded",
+          "x-real-ip": ip(),
+        },
+        body: new URLSearchParams({
+          first_name: body.first_name,
+          last_name: body.last_name,
+          contact_number: body.contact_number,
+          email: body.email,
+          wedding_date: body.wedding_date,
+          redirect: "https://evil.example",
+          next: "//evil.example",
+          ref: "KB-AAAA-AAAA",
+          csrf_token: "x",
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/enquire?error=csrf");
+  });
+
+  it("budget: the 6th form post from one IP 303s to rate_limited", async () => {
+    const fixed = `203.0.114.${Date.now() % 250}`;
+    const statuses: (string | null)[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await formPost(input(), { headers: { "x-real-ip": fixed } });
+      statuses.push(res.headers.get("location"));
+    }
+    expect(statuses.slice(0, 5).every((l) => l?.startsWith("/enquire/sent?ref=KB-"))).toBe(true);
+    expect(statuses[5]).toBe("/enquire?error=rate_limited");
+  });
+
+  it("JSON is unchanged: 201 new, 200 duplicate, JSON envelope on error", async () => {
+    const body = input();
+    expect((await post(body)).status).toBe(201);
+    expect((await post(body)).status).toBe(200);
+    const bad = await post({ ...body, email: "nope" });
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).error.code).toBe("VALIDATION_ERROR");
+  });
 });
 
 describe("POST /api/enquiries (KBS-17-1)", () => {

@@ -75,6 +75,24 @@ export function requireCsrf(request: Request): void {
   }
 }
 
+/**
+ * Form-encoded POST (KBS-89, decision/enquiry-nojs-csrf): double-submit with the
+ * hidden `csrf_token` field in place of the header. Origin is REQUIRED here —
+ * a native form post always sends it — and cross-site fetches are refused.
+ */
+export function requireFormCsrf(request: Request, field: string | null): void {
+  requireSameOrigin(request, true);
+  const cookie = csrfCookieValue(request);
+  if (!validCsrfToken(cookie) || !field) {
+    throw new PipelineError(403, "FORBIDDEN", "CSRF validation failed.");
+  }
+  const a = Buffer.from(field);
+  const b = Buffer.from(cookie!);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    throw new PipelineError(403, "FORBIDDEN", "CSRF validation failed.");
+  }
+}
+
 export function csrfSetCookie(value: string): string {
   const secure = env.NODE_ENV !== "development" ? "; Secure" : "";
   return `${CSRF_COOKIE}=${value}; Path=/; SameSite=Lax${secure}`;

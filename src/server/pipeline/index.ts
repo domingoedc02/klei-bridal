@@ -16,8 +16,10 @@ import {
   isStateChanging,
   mintCsrfToken,
   requireCsrf,
+  requireFormCsrf,
   requireSameOrigin,
 } from "./csrf";
+import { formErrorResponse, isFormRequest, readForm, type FormOptions } from "./form";
 import { requireStaff, type Principal } from "./authorization";
 import { readJson } from "./body-limit";
 import { validate } from "./validation";
@@ -28,6 +30,7 @@ export { PipelineError, SilentlyDropped } from "./errors";
 export { CSRF_COOKIE, csrfSetCookie, mintCsrfToken } from "./csrf";
 export type { Principal } from "./authorization";
 export { readJson, readMultipart } from "./body-limit";
+export { formRedirect, type FormOptions } from "./form";
 export { enforceRateLimit } from "./rate-limit";
 export { requestIdOf } from "./request-id";
 export { validate } from "./validation";
@@ -53,6 +56,16 @@ export interface PipelineOptions {
    * directly, so a CSRF token proves nothing. Refused on a staff route.
    */
   csrf?: false;
+  /**
+   * Accept a native `application/x-www-form-urlencoded` POST (no-JS and
+   * pre-hydration submits) as well as JSON. Public routes only, and allowlisted
+   * in tests/unit/pipeline/routeUsage.test.ts. CSRF stays ON: the hidden
+   * `csrf_token` field must match the cookie, and Origin is required. Every
+   * outcome of a form request is a 303 to a fixed same-origin path; the
+   * handler receives `viaForm: true` and returns the success redirect itself.
+   * (decision/enquiry-nojs-csrf)
+   */
+  form?: FormOptions;
   /**
    * Zod schemas, run after authorization and before the handler (KBS-11-3).
    * The parsed values reach the handler as `context.body` / `.query` /
@@ -123,11 +136,15 @@ export function withPipeline<C>(
   if (options.csrf === false && options.auth !== "public") {
     throw new Error("withPipeline: csrf: false is allowed on public routes only");
   }
+  if (options.form && (options.auth !== "public" || options.csrf === false)) {
+    throw new Error("withPipeline: form is allowed on public routes with CSRF on only");
+  }
   const report = options.report ?? defaultReporter;
 
   return async (request, context) => {
     const requestId = requestIdOf(request.headers);
     let response: Response;
+    const viaForm = !!options.form && isStateChanging(request) && isFormRequest(request);
     try {
       const limited = enforceBodyLimit(request, options.bodyLimits ?? defaultBodyLimits);
 
@@ -146,14 +163,19 @@ export function withPipeline<C>(
       if (options.auth === "staff") {
         requireStaff(principal, { passwordChangeExempt: options.allowPendingPasswordChange });
       }
-      if (isStateChanging(request) && options.csrf !== false) {
+      let formBody: Record<string, string | string[]> | undefined;
+      if (viaForm) {
+        const form = await readForm(limited, options.form!);
+        requireFormCsrf(limited, form.csrf);
+        formBody = form.body;
+      } else if (isStateChanging(request) && options.csrf !== false) {
         if (isChannelBeacon(request)) requireSameOrigin(request, true);
         else requireCsrf(request);
       }
 
       const base = context && typeof context === "object" ? context : {};
-      const parsed: Record<string, unknown> = {};
-      if (options.body) parsed.body = validate(options.body, await readJson(limited));
+      const parsed: Record<string, unknown> = viaForm ? { viaForm: true } : {};
+      if (options.body) parsed.body = validate(options.body, formBody ?? (await readJson(limited)));
       if (options.query) {
         // ponytail: a repeated query key keeps its last value; use getAll() in the schema's route if one ever needs arrays.
         parsed.query = validate(options.query, Object.fromEntries(limited.nextUrl.searchParams));
@@ -166,7 +188,9 @@ export function withPipeline<C>(
     } catch (error) {
       // redirect() / notFound() are control flow, not failures.
       unstable_rethrow(error);
-      response = mapError(error, requestId, report);
+      response = viaForm
+        ? formErrorResponse(error, options.form!, requestId, report)
+        : mapError(error, requestId, report);
     }
     return finalize(response, requestId, request);
   };
