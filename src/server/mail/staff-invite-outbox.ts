@@ -87,13 +87,14 @@ export async function rewrapStaffMailPayload(db: Database, outboxId: string): Pr
 
 export async function enqueueStaffInviteMail(
   tx: Tx,
-  input: { tokenId: string; idempotencyKey: string; email: MailPayload },
+  input: { tokenId: string; idempotencyKey: string; email: MailPayload; availableAt?: Date },
 ): Promise<void> {
   await tx.insert(staffMailOutbox).values({
     tokenId: input.tokenId,
     idempotencyKey: input.idempotencyKey,
     payload: encryptStaffMailPayload(input.email),
     keyVersion: currentKeyVersion(),
+    ...(input.availableAt ? { availableAt: input.availableAt } : {}),
   });
 }
 
@@ -164,6 +165,8 @@ export async function processStaffInviteMail(
       options?: { idempotencyKey?: string },
     ) => Promise<{ providerMessageId?: string } | void>;
     now?: () => Date;
+    /** Claim only this row (tests, targeted retries). Default: next due row. */
+    outboxId?: string;
   } = {},
 ): Promise<boolean> {
   const db = deps.db ?? defaultDb;
@@ -182,6 +185,7 @@ export async function processStaffInviteMail(
       .from(staffMailOutbox)
       .where(
         and(
+          deps.outboxId ? eq(staffMailOutbox.id, deps.outboxId) : undefined,
           lte(staffMailOutbox.availableAt, now),
           or(
             eq(staffMailOutbox.status, "pending"),

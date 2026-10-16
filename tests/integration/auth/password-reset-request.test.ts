@@ -34,6 +34,17 @@ beforeAll(async () => {
   passwordHash = await hashPassword(PASSWORD);
 });
 
+/** Newest outbox row for a staff member's reset tokens, so tests process exactly their own mail. */
+async function outboxIdFor(staffId: string): Promise<string> {
+  const [row] = await sql<{ id: string }[]>`
+    SELECT o.id FROM staff_mail_outbox o
+    JOIN password_reset_tokens t ON t.id = o.token_id
+    WHERE t.staff_user_id = ${staffId}
+    ORDER BY o.created_at DESC LIMIT 1
+  `;
+  return row!.id;
+}
+
 afterAll(async () => {
   if (created.length) {
     await sql`DELETE FROM password_reset_tokens WHERE staff_user_id = ANY(${created})`;
@@ -52,7 +63,7 @@ describe("staff password-reset request (KBS-59-1)", () => {
     const off = await requestPasswordReset({ email: disabled.email }, { db });
     const found = await requestPasswordReset({ email: active.email }, { db });
     const send = vi.fn().mockResolvedValue(undefined);
-    await processStaffInviteMail({ db, send, now: () => new Date() });
+    await processStaffInviteMail({ db, send, now: () => new Date(), outboxId: await outboxIdFor(active.id) });
 
     expect(unknown).toEqual({ accepted: true });
     expect(off).toEqual(unknown);
@@ -71,7 +82,7 @@ describe("staff password-reset request (KBS-59-1)", () => {
     expect(outbox).toMatchObject({ status: "pending", attempts: 0 });
     const send = vi.fn(async () => { throw new Error("provider secret detail"); });
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      await processStaffInviteMail({ db, send, now: () => new Date(now.getTime() + attempt * 60_001) });
+      await processStaffInviteMail({ db, send, now: () => new Date(now.getTime() + attempt * 60_001), outboxId: outbox!.id });
     }
     const [failed] = await sql<{ status: string; attempts: number; payload: Buffer | null }[]>`
       SELECT status, attempts, payload FROM staff_mail_outbox WHERE id = ${outbox!.id}
@@ -99,9 +110,9 @@ describe("staff password-reset request (KBS-59-1)", () => {
     const deps = { db, sendEmail, now: () => now };
 
     await requestPasswordReset({ email: staff.email }, deps);
-    await processStaffInviteMail({ db, send: sendEmail, now: () => now });
+    await processStaffInviteMail({ db, send: sendEmail, now: () => now, outboxId: await outboxIdFor(staff.id) });
     await requestPasswordReset({ email: staff.email }, deps);
-    await processStaffInviteMail({ db, send: sendEmail, now: () => now });
+    await processStaffInviteMail({ db, send: sendEmail, now: () => now, outboxId: await outboxIdFor(staff.id) });
     expect(sent).toHaveLength(2);
 
     const firstRaw = /token=([^\s]+)/.exec(sent[0]!.text)![1]!;

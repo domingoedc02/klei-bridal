@@ -112,6 +112,7 @@ export async function requestPasswordReset(
     await enqueueStaffInviteMail(tx, {
       tokenId: tokenRow.id,
       idempotencyKey: `password-reset-${token.hash}`,
+      availableAt: now,
       email: {
         to: active.email,
         subject: "Reset your Klei Bridal Studio password",
