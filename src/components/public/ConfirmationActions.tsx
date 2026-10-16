@@ -14,18 +14,42 @@ export interface ConfirmationData {
   viber_number: string | null;
 }
 
-function channelUrl(shortLink: string) {
+type Channel = "messenger" | "whatsapp" | "viber";
+
+const SAFE_TEXT = /^(?!.*[\u0000-\u001f\u007f<>]).+$/u;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+const HANDLE = /^[A-Za-z0-9._-]{1,100}$/u;
+const PHONE = /^\d{7,15}$/u;
+const TOKEN = /^[A-Za-z0-9_-]{8,200}$/u;
+
+function boundedText(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max && SAFE_TEXT.test(value);
+}
+
+function shortLink(value: unknown): string | null {
+  if (typeof value !== "string") return null;
   try {
-    const url = new URL(shortLink, window.location.origin);
-    const token = url.pathname.split("/").filter(Boolean).at(-1);
-    return token ? `/e/${encodeURIComponent(token)}/channel` : null;
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.origin !== window.location.origin) return null;
+    if (url.search || url.hash) return null;
+    const parts = url.pathname.split("/");
+    const token = parts.length === 3 && parts[1] === "e" ? parts[2] : undefined;
+    return token && TOKEN.test(token) ? url.href : null;
   } catch {
     return null;
   }
 }
 
-function recordChannel(shortLink: string, channel: "messenger" | "whatsapp" | "viber") {
-  const endpoint = channelUrl(shortLink);
+function channelUrl(shortLinkValue: string): string | null {
+  const link = shortLink(shortLinkValue);
+  if (!link) return null;
+  const token = new URL(link).pathname.split("/")[2];
+  return token ? `/e/${encodeURIComponent(token)}/channel` : null;
+}
+
+function recordChannel(shortLinkValue: string, channel: Channel) {
+  const endpoint = channelUrl(shortLinkValue);
   if (!endpoint) return;
   const body = JSON.stringify({ channel });
   try {
@@ -46,46 +70,90 @@ function recordChannel(shortLink: string, channel: "messenger" | "whatsapp" | "v
   }
 }
 
-function message(data: ConfirmationData) {
-  const gowns = data.gowns.length ? data.gowns.join(", ") : "no gown selected yet";
+function validDate(value: unknown): value is string {
+  if (typeof value !== "string" || !DATE.test(value)) return false;
+  const [, year, month, day] = value.match(DATE) ?? [];
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return date.toISOString().slice(0, 10) === value;
+}
+
+function validGowns(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= 20 &&
+    value.every((gown) => boundedText(gown, 200) && !UUID.test(gown))
+  );
+}
+
+function validShortLink(value: unknown): value is string {
+  return shortLink(value) !== null;
+}
+
+function message(data: ConfirmationData, link: string) {
   return [
     `Hello Klei Bridal Studio, my name is ${data.first_name} ${data.last_name}.`,
-    `Gowns: ${gowns}.`,
+    `Gowns: ${data.gowns.join(", ")}.`,
     `Wedding date: ${data.wedding_date}.`,
-    `Enquiry: ${data.short_link_url ?? data.reference}`,
+    `Enquiry: ${link}`,
   ].join(" ");
 }
 
+function destinations(data: ConfirmationData, link: string) {
+  if (
+    !boundedText(data.first_name, 100) ||
+    !boundedText(data.last_name, 100) ||
+    !validDate(data.wedding_date) ||
+    !validGowns(data.gowns) ||
+    !validShortLink(link)
+  ) {
+    return null;
+  }
+  const shareMessage = message(data, link);
+  const messenger = HANDLE.test(data.messenger_page ?? "")
+    ? new URL(`https://m.me/${data.messenger_page}`)
+    : null;
+  const whatsapp = PHONE.test(data.whatsapp_number ?? "")
+    ? new URL(`https://wa.me/${data.whatsapp_number}`)
+    : null;
+  const viber = PHONE.test(data.viber_number ?? "") ? new URL("viber://chat") : null;
+  if (viber) {
+    viber.search = new URLSearchParams({ number: `+${data.viber_number}`, text: shareMessage }).toString();
+  }
+  if (whatsapp) whatsapp.search = new URLSearchParams({ text: shareMessage }).toString();
+  return {
+    link,
+    messenger: messenger?.href ?? null,
+    whatsapp: whatsapp?.href ?? null,
+    viber: viber?.href ?? null,
+  };
+}
+
 export default function ConfirmationActions({ data }: { data: ConfirmationData }) {
-  const shareMessage = message(data);
-  const messengerHref = data.messenger_page
-    ? `https://m.me/${encodeURIComponent(data.messenger_page)}`
-    : null;
-  const whatsappHref = data.whatsapp_number
-    ? `https://wa.me/${data.whatsapp_number}?text=${encodeURIComponent(shareMessage)}`
-    : null;
-  const viberHref = data.viber_number
-    ? `viber://chat?number=%2B${data.viber_number}&text=${encodeURIComponent(shareMessage)}`
-    : null;
+  const safeLink = shortLink(data.short_link_url);
+  const safe = safeLink ? destinations(data, safeLink) : null;
+  const messengerHref = safe?.messenger ?? null;
+  const whatsappHref = safe?.whatsapp ?? null;
+  const viberHref = safe?.viber ?? null;
   const secondaryHref = whatsappHref ?? viberHref;
-  const secondaryChannel = whatsappHref ? "whatsapp" : "viber";
+  const secondaryChannel: Channel = whatsappHref ? "whatsapp" : "viber";
 
   const onMessenger = useCallback(() => {
-    if (!data.short_link_url) return;
+    if (!safe) return;
     try {
-      const write = navigator.clipboard?.writeText(data.short_link_url);
+      const write = navigator.clipboard?.writeText(safe.link);
       void write?.catch(() => undefined);
     } catch {
       // Visible selectable URL remains manual-copy fallback.
     }
-    recordChannel(data.short_link_url, "messenger");
-  }, [data.short_link_url]);
+    recordChannel(safe.link, "messenger");
+  }, [safe]);
 
   const onSecondary = useCallback(() => {
-    if (data.short_link_url) recordChannel(data.short_link_url, secondaryChannel);
-  }, [data.short_link_url, secondaryChannel]);
+    if (safe) recordChannel(safe.link, secondaryChannel);
+  }, [safe, secondaryChannel]);
 
-  if (!messengerHref && !secondaryHref) return null;
+  if (!safe || (!messengerHref && !secondaryHref)) return null;
   return (
     <section className="chat-actions" aria-labelledby="chat-actions-title">
       <h2 id="chat-actions-title">Continue the conversation</h2>

@@ -21,7 +21,7 @@ export default async function EnquirySentPage({
     <main className="sent">
       <h1>Thank you</h1>
       <p>Your enquiry was sent. We will be in touch soon.</p>
-      <p>A copy of your enquiry, including its reference and short link, was also emailed to you.</p>
+      <p>A copy of your enquiry was also emailed to you.</p>
       {reference ? (
         <p>
           Your reference is <strong>{reference}</strong>. Keep it if you want to ask about this

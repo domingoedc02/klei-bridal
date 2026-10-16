@@ -155,7 +155,8 @@ export default function EnquiryForm({
           first_name: String(values.first_name ?? ""),
           last_name: String(values.last_name ?? ""),
           wedding_date: String(values.wedding_date ?? ""),
-          gowns: gowns.slice(),
+          // Favourites storage contains IDs only; never present them as gown names.
+          gowns: [],
           messenger_page: chatSettings.messengerPage,
           whatsapp_number: chatSettings.whatsappNumber,
           viber_number: chatSettings.viberNumber,
