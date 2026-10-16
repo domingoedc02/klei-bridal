@@ -10,6 +10,7 @@ import {
   PASSWORD_RESET_TOKEN_TTL_MS,
   requestPasswordReset,
 } from "@/server/services/password-reset";
+import { processStaffInviteMail } from "@/server/mail/staff-invite-outbox";
 
 const DATABASE_URL =
   process.env.DATABASE_URL ?? "postgresql://klei:klei_dev_pw@localhost:5432/klei_dev";
@@ -47,20 +48,45 @@ describe("staff password-reset request (KBS-59-1)", () => {
   it("returns the same neutral result for unknown, disabled and active addresses", async () => {
     const active = await makeStaff();
     const disabled = await makeStaff(false);
-    const sendEmail = vi.fn().mockResolvedValue(undefined);
-    const deps = { db, sendEmail };
-
-    const unknown = await requestPasswordReset(
-      { email: `nobody-${randomUUID()}@kleibridal.test` },
-      deps,
-    );
-    const off = await requestPasswordReset({ email: disabled.email }, deps);
-    const found = await requestPasswordReset({ email: active.email }, deps);
+    const unknown = await requestPasswordReset({ email: `nobody-${randomUUID()}@kleibridal.test` }, { db });
+    const off = await requestPasswordReset({ email: disabled.email }, { db });
+    const found = await requestPasswordReset({ email: active.email }, { db });
+    const send = vi.fn().mockResolvedValue(undefined);
+    await processStaffInviteMail({ db, send });
 
     expect(unknown).toEqual({ accepted: true });
     expect(off).toEqual(unknown);
     expect(found).toEqual(unknown);
-    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues provider failures for retry, then revokes token and audits terminal failure", async () => {
+    const staff = await makeStaff();
+    const now = new Date("2026-10-10T12:00:00.000Z");
+    await requestPasswordReset({ email: staff.email }, { db, now: () => now });
+    const [outbox] = await sql<{ id: string; token_id: string; status: string; attempts: number }[]>`
+      SELECT id, token_id, status, attempts FROM staff_mail_outbox
+      WHERE token_id IN (SELECT id FROM password_reset_tokens WHERE staff_user_id = ${staff.id})
+    `;
+    expect(outbox).toMatchObject({ status: "pending", attempts: 0 });
+    const send = vi.fn(async () => { throw new Error("provider secret detail"); });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await processStaffInviteMail({ db, send, now: () => new Date(now.getTime() + attempt * 60_001) });
+    }
+    const [failed] = await sql<{ status: string; attempts: number; payload: Buffer | null }[]>`
+      SELECT status, attempts, payload FROM staff_mail_outbox WHERE id = ${outbox!.id}
+    `;
+    expect(failed).toMatchObject({ status: "failed", attempts: 3, payload: null });
+    const [token] = await sql<{ revoked_at: Date | null }[]>`
+      SELECT revoked_at FROM password_reset_tokens WHERE id = ${outbox!.token_id}
+    `;
+    expect(token!.revoked_at).not.toBeNull();
+    const audit = await sql<{ action: string; detail: Record<string, unknown> }[]>`
+      SELECT action, detail FROM audit_log WHERE entity_id = ${staff.id} AND action = 'auth.password_reset_mail_failed'
+    `;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.detail).toEqual({ delivery: "failed", error_code: "provider_rejected" });
+    expect(JSON.stringify(audit)).not.toContain("provider secret detail");
   });
 
   it("stores only a hash, expires after 30 minutes, and revokes the prior active token", async () => {
