@@ -33,12 +33,20 @@ export default defineConfig({
     {
       name: "phone",
       testIgnore: /gown-images\.spec\.ts/,
-      use: { ...devices["Pixel 7"], viewport: { width: 390, height: 844 } },
+      use: {
+        ...devices["Pixel 7"],
+        viewport: { width: 390, height: 844 },
+        extraHTTPHeaders: { "x-forwarded-for": "198.51.100.10" },
+      },
     },
     {
       name: "laptop",
       testIgnore: /gown-images\.spec\.ts/,
-      use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } },
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1280, height: 800 },
+        extraHTTPHeaders: { "x-forwarded-for": "198.51.100.11" },
+      },
     },
     ...gownImageProjects.map(([name, width, deviceScaleFactor]) => ({
       name,
