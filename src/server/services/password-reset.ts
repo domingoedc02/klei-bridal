@@ -16,6 +16,8 @@ import { sendTransactionalEmail } from "@/server/mail/send";
 const RESET_TOKEN_BYTES = 32;
 const RESET_TOKEN_TTL_MS = 30 * 60_000;
 const RESET_PATH = "/admin/reset-password";
+const INVITE_KIND = "invite";
+const RESET_KIND = "reset";
 
 export interface PasswordResetRequestDeps {
   db: Database;
@@ -93,6 +95,7 @@ export async function requestPasswordReset(
       );
     await tx.insert(passwordResetTokens).values({
       staffUserId: active.id,
+      kind: RESET_KIND,
       tokenHash: token.hash,
       expiresAt: new Date(now.getTime() + RESET_TOKEN_TTL_MS),
       createdAt: now,
@@ -133,6 +136,75 @@ export async function requestPasswordReset(
   return { accepted: true };
 }
 
+export async function confirmStaffInvite(
+  input: { token: string; newPassword: string; ip: string | null; userAgent: string | null },
+  deps: PasswordResetConfirmationDeps = defaultConfirmationDeps,
+): Promise<ConfirmPasswordResetResult> {
+  const now = deps.now?.() ?? new Date();
+  const tokenHash = hashPasswordResetToken(input.token);
+  const [candidate] = await deps.db
+    .select({
+      staffUserId: passwordResetTokens.staffUserId,
+      name: staffUsers.name,
+      email: staffUsers.email,
+    })
+    .from(passwordResetTokens)
+    .innerJoin(staffUsers, eq(staffUsers.id, passwordResetTokens.staffUserId))
+    .where(
+      and(
+        eq(passwordResetTokens.tokenHash, tokenHash),
+        eq(passwordResetTokens.kind, INVITE_KIND),
+        isNull(passwordResetTokens.usedAt),
+        isNull(passwordResetTokens.revokedAt),
+        gt(passwordResetTokens.expiresAt, now),
+        eq(staffUsers.isActive, true),
+      ),
+    )
+    .limit(1);
+  if (!candidate) return { ok: false, reason: "invalid_token" };
+  const policy = await assertPasswordAllowed(input.newPassword, { email: candidate.email });
+  if (!policy.ok) return { ok: false, reason: policy.reason };
+  const passwordHash = await hashPassword(input.newPassword);
+  const result = await deps.db.transaction(async (tx) => {
+    const [claimed] = await tx
+      .update(passwordResetTokens)
+      .set({ usedAt: now })
+      .where(
+        and(
+          eq(passwordResetTokens.tokenHash, tokenHash),
+          eq(passwordResetTokens.kind, INVITE_KIND),
+          eq(passwordResetTokens.staffUserId, candidate.staffUserId),
+          isNull(passwordResetTokens.usedAt),
+          isNull(passwordResetTokens.revokedAt),
+          gt(passwordResetTokens.expiresAt, now),
+        ),
+      )
+      .returning({ staffUserId: passwordResetTokens.staffUserId });
+    if (!claimed) return { ok: false as const, reason: "invalid_token" as const };
+    await tx
+      .update(staffUsers)
+      .set({
+        passwordHash,
+        tempPasswordExpiresAt: null,
+        failedLoginCount: 0,
+        lockedUntil: null,
+        updatedAt: now,
+      })
+      .where(and(eq(staffUsers.id, candidate.staffUserId), eq(staffUsers.isActive, true)));
+    await tx.insert(auditLog).values({
+      occurredAt: now,
+      actorUserId: null,
+      action: "staff.invite_accept",
+      ip: inetOrNull(input.ip),
+      entityType: "staff_user",
+      entityId: candidate.staffUserId,
+      detail: {},
+    });
+    return { ok: true as const, revokedSessions: 0 };
+  });
+  return result;
+}
+
 export async function confirmPasswordReset(
   input: { token: string; newPassword: string; ip: string | null; userAgent: string | null },
   deps: PasswordResetConfirmationDeps = defaultConfirmationDeps,
@@ -142,6 +214,7 @@ export async function confirmPasswordReset(
   const [candidate] = await deps.db
     .select({
       staffUserId: passwordResetTokens.staffUserId,
+      kind: passwordResetTokens.kind,
       name: staffUsers.name,
       email: staffUsers.email,
     })
@@ -169,6 +242,7 @@ export async function confirmPasswordReset(
       .where(
         and(
           eq(passwordResetTokens.tokenHash, tokenHash),
+          eq(passwordResetTokens.kind, candidate.kind),
           eq(passwordResetTokens.staffUserId, candidate.staffUserId),
           isNull(passwordResetTokens.usedAt),
           isNull(passwordResetTokens.revokedAt),
