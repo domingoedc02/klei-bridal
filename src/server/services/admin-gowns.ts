@@ -1,4 +1,4 @@
-import { and, asc, count, eq, ilike, inArray, like, or } from "drizzle-orm";
+import { and, asc, count, eq, exists, ilike, inArray, like, or, sql } from "drizzle-orm";
 
 import type { Principal } from "@/server/pipeline";
 import { PipelineError } from "@/server/pipeline/errors";
@@ -10,6 +10,7 @@ import {
   gownMaterials,
   gownImages,
   gowns,
+  imageJobs,
   materials,
   priceHistory,
   silhouettes,
@@ -338,18 +339,39 @@ export async function publishAdminGown(id: string, actor: Principal, db: Databas
   let changed = false;
   return afterCatalogueMutation(
     db.transaction(async (tx) => {
-      const [row] = await tx.select().from(gowns).where(eq(gowns.id, id)).limit(1);
+      const [row] = await tx.select().from(gowns).where(eq(gowns.id, id)).for("update");
       if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
       if (row.status === "published") return presentGown(tx, row);
       changed = true;
       if (row.status === "archived")
         throw new PipelineError(409, "CONFLICT", "Archived gowns cannot be published.");
-      const [image] = await tx
+      const [anyImage] = await tx
         .select({ id: gownImages.id })
         .from(gownImages)
         .where(eq(gownImages.gownId, id))
         .limit(1);
-      if (!image?.id) validation({ images: "Add a gown image before publishing." });
+      if (!anyImage) validation({ images: "Add a gown image before publishing." });
+      const readyHero = exists(
+        tx
+          .select({ one: sql`1` })
+          .from(gownImages)
+          .where(
+            and(
+              eq(gownImages.gownId, id),
+              eq(gownImages.isHero, true),
+              exists(
+                tx
+                  .select({ one: sql`1` })
+                  .from(imageJobs)
+                  .where(
+                    and(eq(imageJobs.gownImageId, gownImages.id), eq(imageJobs.status, "done")),
+                  ),
+              ),
+            ),
+          ),
+      );
+      const [ready] = await tx.select({ id: gowns.id }).from(gowns).where(readyHero);
+      if (!ready) validation({ images: "Choose a hero photo that has finished processing." });
       if (row.priceStatus === "priced" && (!row.priceMinor || row.priceMinor <= 0)) {
         validation({ price_minor: "Enter a positive price, or choose price on request." });
       }
