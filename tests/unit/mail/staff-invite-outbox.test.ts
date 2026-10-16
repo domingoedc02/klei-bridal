@@ -183,7 +183,8 @@ describe("staff invite mail outbox", () => {
                   payload: encryptStaffMailPayload(payload),
                   attempts: 2,
                   keyVersion: 1,
-                  idempotencyKey: "staff-invite:test",
+                  idempotencyKey: "password-reset:test",
+                  kind: "reset",
                 },
               ],
             }),
@@ -197,7 +198,7 @@ describe("staff invite mail outbox", () => {
         from: () => ({
           innerJoin: () => ({
             where: () => ({
-              for: async () => [{ tokenId: "token-1", staffUserId: "staff-1" }],
+              for: async () => [{ tokenId: "token-1", staffUserId: "staff-1", kind: "reset" }],
             }),
           }),
         }),

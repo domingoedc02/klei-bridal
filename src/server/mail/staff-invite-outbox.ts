@@ -113,7 +113,11 @@ async function terminalFailure(
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const [row] = await tx
-      .select({ tokenId: staffMailOutbox.tokenId, staffUserId: passwordResetTokens.staffUserId })
+      .select({
+        tokenId: staffMailOutbox.tokenId,
+        staffUserId: passwordResetTokens.staffUserId,
+        kind: passwordResetTokens.kind,
+      })
       .from(staffMailOutbox)
       .innerJoin(passwordResetTokens, eq(passwordResetTokens.id, staffMailOutbox.tokenId))
       .where(eq(staffMailOutbox.id, id))
@@ -143,7 +147,7 @@ async function terminalFailure(
     await tx.insert(auditLog).values({
       occurredAt: now,
       actorUserId: null,
-      action: "staff.invite_mail_failed",
+      action: row.kind === "reset" ? "auth.password_reset_mail_failed" : "staff.invite_mail_failed",
       entityType: "staff_user",
       entityId: row.staffUserId,
       detail: { delivery: "failed", error_code: errorCode },
