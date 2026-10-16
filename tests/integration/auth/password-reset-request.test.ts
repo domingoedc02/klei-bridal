@@ -52,7 +52,7 @@ describe("staff password-reset request (KBS-59-1)", () => {
     const off = await requestPasswordReset({ email: disabled.email }, { db });
     const found = await requestPasswordReset({ email: active.email }, { db });
     const send = vi.fn().mockResolvedValue(undefined);
-    await processStaffInviteMail({ db, send });
+    await processStaffInviteMail({ db, send, now: () => new Date() });
 
     expect(unknown).toEqual({ accepted: true });
     expect(off).toEqual(unknown);
@@ -99,7 +99,9 @@ describe("staff password-reset request (KBS-59-1)", () => {
     const deps = { db, sendEmail, now: () => now };
 
     await requestPasswordReset({ email: staff.email }, deps);
+    await processStaffInviteMail({ db, send: sendEmail, now: () => now });
     await requestPasswordReset({ email: staff.email }, deps);
+    await processStaffInviteMail({ db, send: sendEmail, now: () => now });
     expect(sent).toHaveLength(2);
 
     const firstRaw = /token=([^\s]+)/.exec(sent[0]!.text)![1]!;

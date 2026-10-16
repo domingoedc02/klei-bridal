@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { validateSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { MemoryAttemptStore } from "@/server/ratelimit/attempt-store";
+import { processStaffInviteMail } from "@/server/mail/staff-invite-outbox";
 import { signIn } from "@/server/services/auth";
 import {
   confirmPasswordReset,
@@ -38,8 +39,9 @@ async function makeStaff() {
 /** Issue a token through the real request path and pull it out of the mail. */
 async function issueToken(email: string, now: Date): Promise<string> {
   const sendEmail = vi.fn().mockResolvedValue(undefined);
-  await requestPasswordReset({ email }, { db, sendEmail, now: () => now });
-  await vi.waitFor(() => expect(sendEmail).toHaveBeenCalledOnce());
+  await requestPasswordReset({ email }, { db, now: () => now });
+  await processStaffInviteMail({ db, send: sendEmail, now: () => now });
+  expect(sendEmail).toHaveBeenCalledOnce();
   const text = (sendEmail.mock.calls[0]![0] as { text: string }).text;
   return decodeURIComponent(/token=([^\s]+)/.exec(text)![1]!);
 }

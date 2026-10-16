@@ -105,15 +105,14 @@ describe("staff invite tokens", () => {
     await sql`
       CREATE OR REPLACE FUNCTION kbs_test_skip_staff_update() RETURNS trigger AS $fn$
       BEGIN
-        IF OLD.id::text = TG_ARGV[0] THEN RETURN NULL; END IF;
-        RETURN NEW;
+        RETURN NULL;
       END;
       $fn$ LANGUAGE plpgsql
     `;
     await sql`
       CREATE TRIGGER kbs_test_skip_staff_update
       BEFORE UPDATE ON staff_users FOR EACH ROW
-      EXECUTE FUNCTION kbs_test_skip_staff_update(${id})
+      EXECUTE FUNCTION kbs_test_skip_staff_update()
     `;
     try {
       await expect(
@@ -144,6 +143,11 @@ describe("staff invite tokens", () => {
 
   it("allows one concurrent redemption and leaves loser without partial mutation", async () => {
     const id = await makeStaff(oldHash);
+    await sql`
+      UPDATE staff_users
+      SET temp_password_expires_at = ${new Date(Date.now() + 60 * 60_000)}
+      WHERE id = ${id}
+    `;
     const sessionA = await createSession(db, { staffUserId: id, ip: null, userAgent: "a" });
     const sessionB = await createSession(db, { staffUserId: id, ip: null, userAgent: "b" });
     const now = new Date("2026-10-16T01:00:00Z");
