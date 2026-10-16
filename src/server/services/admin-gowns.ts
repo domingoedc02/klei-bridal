@@ -10,6 +10,7 @@ import {
   gownMaterials,
   gownImages,
   gowns,
+  imageJobs,
   materials,
   priceHistory,
   silhouettes,
@@ -347,9 +348,14 @@ export async function publishAdminGown(id: string, actor: Principal, db: Databas
       const [image] = await tx
         .select({ id: gownImages.id })
         .from(gownImages)
-        .where(eq(gownImages.gownId, id))
+        .innerJoin(imageJobs, eq(imageJobs.gownImageId, gownImages.id))
+        .where(
+          and(eq(gownImages.gownId, id), eq(gownImages.isHero, true), eq(imageJobs.status, "done")),
+        )
         .limit(1);
-      if (!image?.id) validation({ images: "Add a gown image before publishing." });
+      if (!image?.id) {
+        validation({ images: "A ready hero image is required before publishing." });
+      }
       if (row.priceStatus === "priced" && (!row.priceMinor || row.priceMinor <= 0)) {
         validation({ price_minor: "Enter a positive price, or choose price on request." });
       }
