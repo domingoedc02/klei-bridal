@@ -5,6 +5,7 @@ import {
   encryptStaffMailPayload,
   enqueueStaffInviteMail,
   processStaffInviteMail,
+  rewrapStaffMailPayload,
 } from "@/server/mail/staff-invite-outbox";
 
 const payload = {
@@ -56,6 +57,12 @@ function pendingDb(attempts = 0) {
 }
 
 describe("staff invite mail outbox", () => {
+  it("rewraps payload with current key version", () => {
+    const original = encryptStaffMailPayload(payload, 1);
+    const rotated = rewrapStaffMailPayload(original, 1);
+    expect(rotated).not.toEqual(original);
+    expect(rotated).toHaveLength(original.length);
+  });
   it("encrypts payload and does not retain plaintext token bytes", () => {
     const encrypted = encryptStaffMailPayload(payload);
 
