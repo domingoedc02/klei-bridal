@@ -1,0 +1,2 @@
+-- KBS-123-3: lease columns and in-flight status were included in 0013.
+-- Keep this migration as a recorded no-op; applied migration files are immutable.
