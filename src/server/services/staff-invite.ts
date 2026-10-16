@@ -6,6 +6,11 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db as defaultDb } from "@/server/db/client";
 import type { Database } from "@/server/db/client";
 import { passwordResetTokens, staffUsers } from "@/server/db/schema";
+import { staffInviteEmail } from "@/server/mail/staff-invite";
+import {
+  cancelPendingStaffInviteMail,
+  enqueueStaffInviteMail,
+} from "@/server/mail/staff-invite-outbox";
 
 const INVITE_TOKEN_BYTES = 32;
 export const INVITE_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -45,25 +50,55 @@ export async function issueStaffInvite(
       .select({ id: staffUsers.id, name: staffUsers.name, email: staffUsers.email })
       .from(staffUsers)
       .where(and(eq(staffUsers.id, staffUserId), eq(staffUsers.isActive, true)))
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!staff) return null;
 
+    const activeTokens = await tx
+      .select({ id: passwordResetTokens.id })
+      .from(passwordResetTokens)
+      .where(
+        and(
+          eq(passwordResetTokens.staffUserId, staffUserId),
+          eq(passwordResetTokens.kind, "invite"),
+          isNull(passwordResetTokens.usedAt),
+          isNull(passwordResetTokens.revokedAt),
+        ),
+      )
+      .for("update");
+    await cancelPendingStaffInviteMail(
+      tx,
+      activeTokens.map(({ id }) => id),
+    );
     await tx
       .update(passwordResetTokens)
       .set({ revokedAt: now })
       .where(
         and(
           eq(passwordResetTokens.staffUserId, staffUserId),
+          eq(passwordResetTokens.kind, "invite"),
           isNull(passwordResetTokens.usedAt),
           isNull(passwordResetTokens.revokedAt),
         ),
       );
-    await tx.insert(passwordResetTokens).values({
-      staffUserId,
-      kind: "invite",
-      tokenHash: token.hash,
-      expiresAt,
-      createdAt: now,
+    const [createdToken] = await tx
+      .insert(passwordResetTokens)
+      .values({
+        staffUserId,
+        kind: "invite",
+        tokenHash: token.hash,
+        expiresAt,
+        createdAt: now,
+      })
+      .returning({ id: passwordResetTokens.id });
+    if (!createdToken) throw new Error("invite token insert returned no row");
+    await enqueueStaffInviteMail(tx, {
+      tokenId: createdToken.id,
+      idempotencyKey: `staff-invite:${token.hash}`,
+      email: {
+        to: staff.email,
+        ...staffInviteEmail({ name: staff.name, token: token.raw, expiresAt }),
+      },
     });
 
     return {

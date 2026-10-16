@@ -7,12 +7,14 @@ export interface TransactionalEmail {
   html: string;
 }
 
+export type TransactionalEmailResult = { providerMessageId?: string } | void;
+
 /**
  * Send one transactional message through Resend. Dry-run keeps CI and local
  * development network-free while exercising callers and template generation.
  */
-export async function sendTransactionalEmail(message: TransactionalEmail): Promise<void> {
-  if (env.MAIL_DRY_RUN) return;
+export async function sendTransactionalEmail(message: TransactionalEmail): Promise<TransactionalEmailResult> {
+  if (env.MAIL_DRY_RUN) return {};
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -30,4 +32,6 @@ export async function sendTransactionalEmail(message: TransactionalEmail): Promi
   });
 
   if (!response.ok) throw new Error("transactional email provider rejected message");
+  const body = (await response.json().catch(() => null)) as { id?: string } | null;
+  return { providerMessageId: body?.id };
 }
