@@ -87,13 +87,14 @@ export async function rewrapStaffMailPayload(db: Database, outboxId: string): Pr
 
 export async function enqueueStaffInviteMail(
   tx: Tx,
-  input: { tokenId: string; idempotencyKey: string; email: MailPayload },
+  input: { tokenId: string; idempotencyKey: string; email: MailPayload; availableAt?: Date },
 ): Promise<void> {
   await tx.insert(staffMailOutbox).values({
     tokenId: input.tokenId,
     idempotencyKey: input.idempotencyKey,
     payload: encryptStaffMailPayload(input.email),
     keyVersion: currentKeyVersion(),
+    ...(input.availableAt ? { availableAt: input.availableAt } : {}),
   });
 }
 
@@ -113,7 +114,11 @@ async function terminalFailure(
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const [row] = await tx
-      .select({ tokenId: staffMailOutbox.tokenId, staffUserId: passwordResetTokens.staffUserId })
+      .select({
+        tokenId: staffMailOutbox.tokenId,
+        staffUserId: passwordResetTokens.staffUserId,
+        kind: passwordResetTokens.kind,
+      })
       .from(staffMailOutbox)
       .innerJoin(passwordResetTokens, eq(passwordResetTokens.id, staffMailOutbox.tokenId))
       .where(eq(staffMailOutbox.id, id))
@@ -143,7 +148,7 @@ async function terminalFailure(
     await tx.insert(auditLog).values({
       occurredAt: now,
       actorUserId: null,
-      action: "staff.invite_mail_failed",
+      action: row.kind === "reset" ? "auth.password_reset_mail_failed" : "staff.invite_mail_failed",
       entityType: "staff_user",
       entityId: row.staffUserId,
       detail: { delivery: "failed", error_code: errorCode },
@@ -160,6 +165,8 @@ export async function processStaffInviteMail(
       options?: { idempotencyKey?: string },
     ) => Promise<{ providerMessageId?: string } | void>;
     now?: () => Date;
+    /** Claim only this row (tests, targeted retries). Default: next due row. */
+    outboxId?: string;
   } = {},
 ): Promise<boolean> {
   const db = deps.db ?? defaultDb;
@@ -178,6 +185,7 @@ export async function processStaffInviteMail(
       .from(staffMailOutbox)
       .where(
         and(
+          deps.outboxId ? eq(staffMailOutbox.id, deps.outboxId) : undefined,
           lte(staffMailOutbox.availableAt, now),
           or(
             eq(staffMailOutbox.status, "pending"),

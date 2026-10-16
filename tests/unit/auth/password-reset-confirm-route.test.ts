@@ -114,6 +114,16 @@ describe("POST /api/auth/password-reset/confirm", () => {
     expect(mocks.confirmPasswordReset).not.toHaveBeenCalled();
   });
 
+  it("rejects cross-origin redemption before invoking invite or reset services", async () => {
+    const request = post();
+    request.headers.set("origin", "https://evil.example");
+    const response = await POST(request);
+
+    expect(response.status).toBe(403);
+    expect(mocks.confirmStaffInvite).not.toHaveBeenCalled();
+    expect(mocks.confirmPasswordReset).not.toHaveBeenCalled();
+  });
+
   it("uses staff-invite-redemption IP budget: three requests pass, fourth is 429", async () => {
     mocks.confirmPasswordReset.mockResolvedValue({ ok: true, revokedSessions: 1 });
 

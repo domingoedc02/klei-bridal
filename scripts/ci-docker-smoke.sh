@@ -34,6 +34,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 ENV=(
   -e "DATABASE_URL=postgresql://klei:klei_ci_pw@$PG:5432/klei_ci"
   -e "REDIS_URL=redis://$VK:6379"
+  -e STAFF_MAIL_DATA_KEYS=1:63692f8b8f6f4c7ad4e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6,2:746a3c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3
+  -e STAFF_MAIL_DATA_KEY_VERSION=1
   -e SESSION_SECRET=ci-only-session-secret-not-a-real-secret-00
   -e SITE_URL=http://localhost:3000
   -e NEXT_PUBLIC_SITE_URL=http://localhost:3000

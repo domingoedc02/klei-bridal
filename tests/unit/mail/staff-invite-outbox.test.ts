@@ -183,7 +183,8 @@ describe("staff invite mail outbox", () => {
                   payload: encryptStaffMailPayload(payload),
                   attempts: 2,
                   keyVersion: 1,
-                  idempotencyKey: "staff-invite:test",
+                  idempotencyKey: "password-reset:test",
+                  kind: "reset",
                 },
               ],
             }),
@@ -197,7 +198,7 @@ describe("staff invite mail outbox", () => {
         from: () => ({
           innerJoin: () => ({
             where: () => ({
-              for: async () => [{ tokenId: "token-1", staffUserId: "staff-1" }],
+              for: async () => [{ tokenId: "token-1", staffUserId: "staff-1", kind: "reset" }],
             }),
           }),
         }),
@@ -230,6 +231,13 @@ describe("staff invite mail outbox", () => {
     );
     expect(updateState.set.mock.calls.flat().join(" ")).not.toContain("provider secret detail");
     expect(failureTx.insert).toHaveBeenCalledOnce();
+    const auditValues = failureTx.insert.mock.results[0]!.value.values.mock.calls[0]![0] as {
+      action: string;
+      detail: Record<string, unknown>;
+    };
+    expect(auditValues.action).toBe("auth.password_reset_mail_failed");
+    expect(auditValues.detail).toEqual({ delivery: "failed", error_code: "provider_rejected" });
+    expect(JSON.stringify(auditValues)).not.toContain("secret-token");
   });
 
   it("cancels pending rows for replaced token IDs", async () => {

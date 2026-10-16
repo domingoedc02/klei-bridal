@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { validateSession } from "@/server/auth/session";
 import { db } from "@/server/db/client";
 import { MemoryAttemptStore } from "@/server/ratelimit/attempt-store";
+import { processStaffInviteMail } from "@/server/mail/staff-invite-outbox";
 import { signIn } from "@/server/services/auth";
 import {
   confirmPasswordReset,
@@ -36,10 +37,11 @@ async function makeStaff() {
 }
 
 /** Issue a token through the real request path and pull it out of the mail. */
-async function issueToken(email: string, now: Date): Promise<string> {
+async function issueToken(staffId: string, email: string, now: Date): Promise<string> {
   const sendEmail = vi.fn().mockResolvedValue(undefined);
-  await requestPasswordReset({ email }, { db, sendEmail, now: () => now });
-  await vi.waitFor(() => expect(sendEmail).toHaveBeenCalledOnce());
+  await requestPasswordReset({ email }, { db, now: () => now });
+  await processStaffInviteMail({ db, send: sendEmail, now: () => now, outboxId: await outboxIdFor(staffId) });
+  expect(sendEmail).toHaveBeenCalledOnce();
   const text = (sendEmail.mock.calls[0]![0] as { text: string }).text;
   return decodeURIComponent(/token=([^\s]+)/.exec(text)![1]!);
 }
@@ -52,6 +54,17 @@ const hashOf = async (id: string) =>
 beforeAll(async () => {
   passwordHash = await hashPassword(PASSWORD);
 });
+
+/** Newest outbox row for a staff member's reset tokens, so tests process exactly their own mail. */
+async function outboxIdFor(staffId: string): Promise<string> {
+  const [row] = await sql<{ id: string }[]>`
+    SELECT o.id FROM staff_mail_outbox o
+    JOIN password_reset_tokens t ON t.id = o.token_id
+    WHERE t.staff_user_id = ${staffId}
+    ORDER BY o.created_at DESC LIMIT 1
+  `;
+  return row!.id;
+}
 
 afterAll(async () => {
   if (created.length) {
@@ -73,7 +86,7 @@ describe("staff password-reset confirm (KBS-59)", () => {
     );
     if (!signed.ok) throw new Error(signed.reason);
     const now = new Date();
-    const token = await issueToken(staff.email, now);
+    const token = await issueToken(staff.id, staff.email, now);
     const sendEmail = vi.fn().mockResolvedValue(undefined);
     const input = { token, newPassword: NEW_PASSWORD, ip: "203.0.113.7", userAgent: "vitest" };
 
@@ -102,8 +115,8 @@ describe("staff password-reset confirm (KBS-59)", () => {
   it("refuses an expired, a superseded and an unknown token without changing the password", async () => {
     const staff = await makeStaff();
     const issuedAt = new Date();
-    const superseded = await issueToken(staff.email, issuedAt);
-    const live = await issueToken(staff.email, issuedAt);
+    const superseded = await issueToken(staff.id, staff.email, issuedAt);
+    const live = await issueToken(staff.id, staff.email, issuedAt);
     const sendEmail = vi.fn();
     const attempt = (token: string, at: Date) =>
       confirmPasswordReset(
@@ -122,7 +135,7 @@ describe("staff password-reset confirm (KBS-59)", () => {
   it("rejects a common password and leaves the token usable", async () => {
     const staff = await makeStaff();
     const now = new Date();
-    const token = await issueToken(staff.email, now);
+    const token = await issueToken(staff.id, staff.email, now);
     const deps = { db, sendEmail: vi.fn().mockResolvedValue(undefined), now: () => now };
 
     const weak = await confirmPasswordReset(

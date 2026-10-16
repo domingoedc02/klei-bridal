@@ -11,7 +11,8 @@ import { passwordChangedEmail } from "@/server/mail/templates/password-changed";
 import { db as defaultDb } from "@/server/db/client";
 import type { Database } from "@/server/db/client";
 import { auditLog, passwordResetTokens, staffUsers } from "@/server/db/schema";
-import { sendTransactionalEmail } from "@/server/mail/send";
+import { sendTransactionalEmail, type TransactionalEmail } from "@/server/mail/send";
+import { enqueueStaffInviteMail } from "@/server/mail/staff-invite-outbox";
 
 const RESET_TOKEN_BYTES = 32;
 const RESET_TOKEN_TTL_MS = 30 * 60_000;
@@ -20,10 +21,12 @@ const INVITE_KIND = "invite";
 const RESET_KIND = "reset";
 const TOKEN_CLAIM_ABORT = Symbol("token_claim_abort");
 
+type MailSender = (message: TransactionalEmail) => Promise<void | { providerMessageId?: string }>;
+
 export interface PasswordResetRequestDeps {
   db: Database;
   now?: () => Date;
-  sendEmail?: typeof sendTransactionalEmail;
+  sendEmail?: MailSender;
 }
 
 const defaultDeps: PasswordResetRequestDeps = { db: defaultDb };
@@ -40,7 +43,7 @@ export type ConfirmPasswordResetResult =
 export interface PasswordResetConfirmationDeps {
   db: Database;
   now?: () => Date;
-  sendEmail?: typeof sendTransactionalEmail;
+  sendEmail?: MailSender;
 }
 
 const defaultConfirmationDeps: PasswordResetConfirmationDeps = { db: defaultDb };
@@ -71,7 +74,7 @@ export async function requestPasswordReset(
   const email = input.email.trim().toLowerCase();
   const token = newToken();
 
-  const recipient = await deps.db.transaction(async (tx) => {
+  await deps.db.transaction(async (tx) => {
     // One query for all account states: unknown, disabled and active requests
     // take the same lookup path. Disabled accounts never receive a token.
     const [active] = await tx
@@ -94,45 +97,31 @@ export async function requestPasswordReset(
           isNull(passwordResetTokens.revokedAt),
         ),
       );
-    await tx.insert(passwordResetTokens).values({
-      staffUserId: active.id,
-      kind: RESET_KIND,
-      tokenHash: token.hash,
-      expiresAt: new Date(now.getTime() + RESET_TOKEN_TTL_MS),
-      createdAt: now,
+    const [tokenRow] = await tx
+      .insert(passwordResetTokens)
+      .values({
+        staffUserId: active.id,
+        kind: RESET_KIND,
+        tokenHash: token.hash,
+        expiresAt: new Date(now.getTime() + RESET_TOKEN_TTL_MS),
+        createdAt: now,
+      })
+      .returning({ id: passwordResetTokens.id });
+    if (!tokenRow) throw new Error("password reset token insert returned no row");
+    const url = resetUrl(token.raw);
+    await enqueueStaffInviteMail(tx, {
+      tokenId: tokenRow.id,
+      idempotencyKey: `password-reset-${token.hash}`,
+      availableAt: now,
+      email: {
+        to: active.email,
+        subject: "Reset your Klei Bridal Studio password",
+        text: `Hello ${active.name},\n\nReset your staff password here: ${url}\n\nThis link expires in 30 minutes and can be used once. If you did not request this, ignore this email.`,
+        html: `<p>Hello ${escapeHtml(active.name)},</p><p><a href="${escapeHtml(url)}">Reset your staff password</a></p><p>This link expires in 30 minutes and can be used once. If you did not request this, ignore this email.</p>`,
+      },
     });
     return active;
   });
-
-  if (recipient) {
-    const send = deps.sendEmail ?? sendTransactionalEmail;
-    const url = resetUrl(token.raw);
-    // Deliberately detached: request success does not depend on provider
-    // availability, and raw token is never included in logs or audit detail.
-    void Promise.resolve()
-      .then(() =>
-        send({
-          to: recipient.email,
-          subject: "Reset your Klei Bridal Studio password",
-          text: `Hello ${recipient.name},\n\nReset your staff password here: ${url}\n\nThis link expires in 30 minutes and can be used once. If you did not request this, ignore this email.`,
-          html: `<p>Hello ${escapeHtml(recipient.name)},</p><p><a href="${escapeHtml(url)}">Reset your staff password</a></p><p>This link expires in 30 minutes and can be used once. If you did not request this, ignore this email.</p>`,
-        }),
-      )
-      .catch(async () => {
-        try {
-          await deps.db.insert(auditLog).values({
-            occurredAt: new Date(),
-            actorUserId: null,
-            action: "auth.password_reset_mail_failed",
-            entityType: "staff_user",
-            entityId: recipient.id,
-            detail: {},
-          });
-        } catch {
-          // Mail and its failure audit are both best-effort after commit.
-        }
-      });
-  }
 
   return { accepted: true };
 }

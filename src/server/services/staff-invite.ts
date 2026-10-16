@@ -121,6 +121,7 @@ async function issueStaffInviteInTransaction(
   await enqueueStaffInviteMail(tx, {
     tokenId: tokenRow.id,
     idempotencyKey: `staff-invite-${token.hash}`,
+    availableAt: now,
     email: {
       to: input?.email ?? staff.email,
       ...staffInviteEmail({ name: staff.name, token: token.raw, expiresAt }),
