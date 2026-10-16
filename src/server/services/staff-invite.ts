@@ -204,18 +204,26 @@ export async function resendStaffInvite(
   const db = deps.db ?? defaultDb;
   const now = deps.now?.() ?? new Date();
   return db.transaction(async (tx) => {
+    const [before] = await tx
+      .select({ email: staffUsers.email })
+      .from(staffUsers)
+      .where(eq(staffUsers.id, staffUserId))
+      .for("update");
     const invite = await issueStaffInviteInTransaction(tx, staffUserId, now, {
       email: deps.email,
       resend: true,
     });
     if (!invite) throw new PipelineError(404, "NOT_FOUND", "Staff account not found.");
+    const emailChanged = Boolean(before && invite.email !== before.email);
     await tx.insert(auditLog).values({
       occurredAt: now,
       actorUserId: actor.staff.id,
       action: "staff.invite_resend",
       entityType: "staff_user",
       entityId: staffUserId,
-      detail: {},
+      detail: emailChanged
+        ? { email_changed: true, from: before!.email, to: invite.email }
+        : { email_changed: false },
       ip: inetOrNull(ip),
     });
     return invite;

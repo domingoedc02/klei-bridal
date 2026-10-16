@@ -43,7 +43,7 @@ async function post(request: NextRequest, context: Context) {
   const store = getRateLimitStore();
   await enforceRateLimit(targetHourly, id, store);
   await enforceRateLimit(targetCooldown, id, store);
-  await enforceRateLimit(actorDaily, context.principal.sessionId, store);
+  await enforceRateLimit(actorDaily, context.principal.staff.id, store);
   return Response.json(
     await resendStaffInvitation(id, context.body, context.principal, clientIp(request.headers)),
     { headers: { "cache-control": "no-store" } },
