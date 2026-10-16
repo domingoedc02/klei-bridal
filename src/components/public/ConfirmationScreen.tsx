@@ -102,7 +102,7 @@ export default function ConfirmationScreen({ data }: { data: ConfirmationData })
       "Opens WhatsApp with your details ready. Review, then send.",
       true,
     ),
-    // Viber stays absent until approved exact protocol format is supplied.
+    // KBS-18 ships Messenger and WhatsApp only; Viber is deferred by scope.
     null,
   ];
 

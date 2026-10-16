@@ -19,11 +19,19 @@ const base: HandoffInput = {
 const build = (patch: Partial<HandoffInput>) => buildHandoffs({ ...base, ...patch });
 
 describe("buildHandoffs", () => {
-  it("builds destinations from validated settings", () => {
+  it("builds the scoped Messenger and WhatsApp destinations", () => {
     const h = build({})!;
     expect(h.messenger!.href).toBe("https://m.me/kleibridal");
     expect(h.whatsapp!.href.startsWith("https://wa.me/639171234567?text=")).toBe(true);
+    // Viber is explicitly outside KBS-18 scope until its destination contract exists.
     expect(h.viber).toBeNull();
+  });
+
+  it("ignores configured Viber because KBS-18 excludes it", () => {
+    const h = build({ settings: { ...base.settings, viberNumber: "639171234567" } })!;
+    expect(h.viber).toBeNull();
+    expect(h.messenger).not.toBeNull();
+    expect(h.whatsapp).not.toBeNull();
   });
 
   it("encodes the message once and round-trips special characters", () => {

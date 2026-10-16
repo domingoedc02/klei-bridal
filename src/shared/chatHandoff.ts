@@ -10,6 +10,7 @@ import type { ChatChannel } from "@/shared/schemas/chatChannel";
 export interface ChatSettings {
   messengerPage: string | null;
   whatsappNumber: string | null;
+  /** Retained for settings compatibility; KBS-18 does not emit Viber hand-offs. */
   viberNumber: string | null;
 }
 
@@ -117,9 +118,8 @@ export function buildHandoffs(input: HandoffInput): Handoffs | null {
     settings.whatsappNumber && DIGITS.test(settings.whatsappNumber)
       ? { channel: "whatsapp", href: `https://wa.me/${settings.whatsappNumber}?text=${text}` }
       : null;
-  // ponytail: Viber format is not in the approved spec text. This is Viber's documented
-  // `viber://chat?number=%2B<digits>&text=`. Confirm with team-lead; swap here only.
-  // Viber omitted until approved exact protocol format is supplied.
+  // KBS-18 scope: Messenger and WhatsApp only. Viber is deferred until its
+  // business URL scheme and destination contract are approved.
   const viber: Handoff | null = null;
   if (!messenger && !whatsapp && !viber) return null;
   return { shortLink, messenger, whatsapp, viber };
