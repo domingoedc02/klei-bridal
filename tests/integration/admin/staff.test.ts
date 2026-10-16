@@ -94,6 +94,25 @@ describe("GET /api/admin/staff", () => {
 });
 
 describe("POST /api/admin/staff", () => {
+  it("requires staff authentication before creating an account", async () => {
+    const input = {
+      name: "Unauthorised Person",
+      email: `unauthorised-${randomUUID()}@kleibridal.test`,
+      password: "A-long-temporary-password-42!",
+    };
+    const res = await create(
+      new NextRequest("http://localhost:3000/api/admin/staff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+      { principal: principal(adminId), body: input },
+    );
+    expect(res.status).toBe(401);
+    const rows = await sql`SELECT id FROM staff_users WHERE email = ${input.email}`;
+    expect(rows).toHaveLength(0);
+  });
+
   it("creates with an Argon2id hash, 72-hour pending state, and no credential disclosure", async () => {
     const email = `created-${randomUUID()}@kleibridal.test`;
     const password = "A-long-temporary-password-42!";
