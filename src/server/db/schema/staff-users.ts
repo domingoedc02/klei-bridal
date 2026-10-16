@@ -15,7 +15,8 @@ export const staffUsers = pgTable(
     id: uuid("id").primaryKey().$defaultFn(generateId),
     name: text("name").notNull(),
     email: text("email").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    // NULL means account is passwordless until invite redemption (KBS-123).
+    passwordHash: text("password_hash"),
     tempPasswordExpiresAt: timestamp("temp_password_expires_at", { withTimezone: true }),
     isActive: boolean("is_active").notNull().default(true),
     failedLoginCount: integer("failed_login_count").notNull().default(0),
