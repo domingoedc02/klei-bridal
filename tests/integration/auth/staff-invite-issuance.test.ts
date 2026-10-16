@@ -4,6 +4,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { POST as createStaff } from "../../../app/api/admin/staff/route";
+import { POST as resendInvite } from "../../../app/api/admin/staff/[id]/invite/route";
 import { db } from "@/server/db/client";
 import { hashStaffInviteToken, issueStaffInvite } from "@/server/services/staff-invite";
 
@@ -86,5 +87,27 @@ describe("staff invite issuance (KBS-123-1)", () => {
       await sql`SELECT t.id FROM password_reset_tokens t
         JOIN staff_users s ON s.id = t.staff_user_id WHERE s.email = ${anonEmail}`,
     ).toHaveLength(0);
+  });
+
+  it("route: no session on POST /:id/invite issues no token or outbox mail for an existing staff row", async () => {
+    const count = async () => {
+      const [t] = await sql<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM password_reset_tokens WHERE staff_user_id = ${staffId}`;
+      const [o] = await sql<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM staff_mail_outbox WHERE token_id IN
+          (SELECT id FROM password_reset_tokens WHERE staff_user_id = ${staffId})`;
+      return { tokens: t!.n, outbox: o!.n };
+    };
+    const before = await count();
+    const res = await resendInvite(
+      new NextRequest(`http://localhost:3000/api/admin/staff/${staffId}/invite`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ id: staffId }) } as never,
+    );
+    expect(res.status).toBe(401);
+    expect(await count()).toEqual(before);
   });
 });
