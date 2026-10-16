@@ -335,12 +335,21 @@ export async function setGownHero(
   await afterCatalogueMutation(
     db.transaction(async (tx) => {
       await lockGown(tx, gownId);
+      await lockGown(tx, gownId);
+      const [gown] = await tx
+        .select({ status: gowns.status })
+        .from(gowns)
+        .where(eq(gowns.id, gownId));
       const [image] = await tx
-        .select({ id: gownImages.id, isHero: gownImages.isHero })
+        .select({ id: gownImages.id, isHero: gownImages.isHero, jobStatus: imageJobs.status })
         .from(gownImages)
+        .leftJoin(imageJobs, eq(imageJobs.gownImageId, gownImages.id))
         .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)));
       if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
       if (image.isHero) return; // already the hero: no write, no audit noise
+      if (gown?.status === "published" && image.jobStatus !== "done") {
+        throw new PipelineError(409, "CONFLICT", "This photo hasn't finished processing yet.");
+      }
       changed = true;
       const [previous] = await tx
         .update(gownImages)
@@ -418,9 +427,9 @@ export async function deleteGownImage(
         .for("update");
       if (!gown) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
       const [image] = await tx
-        .delete(gownImages)
-        .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)))
-        .returning();
+        .select({ id: gownImages.id, isHero: gownImages.isHero, originalPath: gownImages.originalPath })
+        .from(gownImages)
+        .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)));
       if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");
       const [next] = await tx
         .select({ id: gownImages.id })
@@ -428,6 +437,9 @@ export async function deleteGownImage(
         .where(eq(gownImages.gownId, gownId))
         .orderBy(asc(gownImages.sortOrder))
         .limit(1);
+      if (gown.status === "published" && image.isHero) {
+        throw new PipelineError(409, "CONFLICT", "Choose another hero photo first.");
+      }
       if (!next && gown.status === "published") {
         throw new PipelineError(
           409,
@@ -438,6 +450,7 @@ export async function deleteGownImage(
       if (image.isHero && next) {
         await tx.update(gownImages).set({ isHero: true }).where(eq(gownImages.id, next.id));
       }
+      await tx.delete(gownImages).where(eq(gownImages.id, imageId));
       await tx.insert(auditLog).values({
         occurredAt: new Date(),
         actorUserId: actor.staff.id,
