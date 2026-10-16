@@ -339,7 +339,8 @@ export async function setGownHero(
       const [gown] = await tx
         .select({ status: gowns.status })
         .from(gowns)
-        .where(eq(gowns.id, gownId));
+        .where(eq(gowns.id, gownId))
+        .for("update");
       const [image] = await tx
         .select({ id: gownImages.id, isHero: gownImages.isHero, jobStatus: imageJobs.status })
         .from(gownImages)
@@ -427,7 +428,11 @@ export async function deleteGownImage(
         .for("update");
       if (!gown) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
       const [image] = await tx
-        .select({ id: gownImages.id, isHero: gownImages.isHero, originalPath: gownImages.originalPath })
+        .select({
+          id: gownImages.id,
+          isHero: gownImages.isHero,
+          originalPath: gownImages.originalPath,
+        })
         .from(gownImages)
         .where(and(eq(gownImages.id, imageId), eq(gownImages.gownId, gownId)));
       if (!image) throw new PipelineError(404, "NOT_FOUND", "Photo not found.");

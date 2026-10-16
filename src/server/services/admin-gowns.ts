@@ -339,11 +339,7 @@ export async function publishAdminGown(id: string, actor: Principal, db: Databas
   let changed = false;
   return afterCatalogueMutation(
     db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(gowns)
-        .where(eq(gowns.id, id))
-        .for("update");
+      const [row] = await tx.select().from(gowns).where(eq(gowns.id, id)).for("update");
       if (!row) throw new PipelineError(404, "NOT_FOUND", "Gown not found.");
       if (row.status === "published") return presentGown(tx, row);
       changed = true;
@@ -359,12 +355,18 @@ export async function publishAdminGown(id: string, actor: Principal, db: Databas
         tx
           .select({ one: sql`1` })
           .from(gownImages)
-          .innerJoin(imageJobs, eq(imageJobs.gownImageId, gownImages.id))
           .where(
             and(
               eq(gownImages.gownId, id),
               eq(gownImages.isHero, true),
-              eq(imageJobs.status, "done"),
+              exists(
+                tx
+                  .select({ one: sql`1` })
+                  .from(imageJobs)
+                  .where(
+                    and(eq(imageJobs.gownImageId, gownImages.id), eq(imageJobs.status, "done")),
+                  ),
+              ),
             ),
           ),
       );
