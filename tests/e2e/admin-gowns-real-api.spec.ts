@@ -72,9 +72,13 @@ test("draft → publish gate → publish → unpublish, slug locked, all price s
   await expect(heading).toHaveText("Draft — not visible to brides");
   await expect(slug).not.toHaveAttribute("readonly");
 
+  const imageId = randomUUID();
   await sql`
     INSERT INTO gown_images (id, gown_id, sort_order, is_hero, original_path, width, height)
-    VALUES (${randomUUID()}, ${gownId}, 0, true, 'e2e/placeholder.jpg', 1200, 1600)`;
+    VALUES (${imageId}, ${gownId}, 0, true, 'e2e/placeholder.jpg', 1200, 1600)`;
+  await sql`
+    INSERT INTO image_jobs (id, gown_image_id, status)
+    VALUES (${randomUUID()}, ${imageId}, 'done')`;
 
   await page.getByRole("button", { name: "Publish" }).click();
   await expect(heading).toHaveText("Published");
