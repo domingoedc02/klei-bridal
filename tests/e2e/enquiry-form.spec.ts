@@ -131,6 +131,7 @@ test.describe("enquiry form without JavaScript", () => {
     await page.getByLabel("Contact number").fill("+63 917 123 4567");
     await page.getByLabel("Email").fill(email);
     await page.getByLabel(/Wedding date/).fill(future);
+    await page.getByLabel(/privacy notice/).check();
     await page.getByRole("button", { name: "Send enquiry" }).click();
 
     await expect(page).toHaveURL(
@@ -154,6 +155,7 @@ test.describe("enquiry form without JavaScript", () => {
     await page.getByLabel("Contact number").fill("not a number");
     await page.getByLabel("Email").fill("maria@kleibridal.test");
     await page.getByLabel(/Wedding date/).fill(future);
+    await page.getByLabel(/privacy notice/).check();
     await page.getByRole("button", { name: "Send enquiry" }).click();
 
     await expect(page).toHaveURL(/\/enquire\?error=invalid&fields=contact_number$/);
@@ -172,6 +174,7 @@ test.describe("enquiry form without JavaScript", () => {
     await page.getByLabel("Contact number").fill("+63 917 123 4567");
     await page.getByLabel("Email").fill("maria@kleibridal.test");
     await page.getByLabel(/Wedding date/).fill(future);
+    await page.getByLabel(/privacy notice/).check();
     await page.getByRole("button", { name: "Send enquiry" }).click();
 
     await expect(page).toHaveURL(/\/enquire\?error=csrf$/);

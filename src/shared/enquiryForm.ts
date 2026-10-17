@@ -35,6 +35,7 @@ export const ENQUIRY_FIELD_LABELS = {
   wedding_date: "Wedding date",
   message: "Message",
   gown_ids: "Gowns you selected",
+  consent: "Privacy notice agreement",
 } as const;
 
 export type EnquiryFieldName = keyof typeof ENQUIRY_FIELD_LABELS;

@@ -10,6 +10,7 @@ import { mintCsrfToken } from "@/server/pipeline/csrf";
 import { db } from "@/server/db/client";
 import { submitEnquiry, type EnquiryInput } from "@/server/services/enquiries";
 import { todayIn } from "@/shared/dates";
+import { PRIVACY_NOTICE_VERSION } from "@/shared/privacy";
 import { csrfHeaders } from "../csrf-headers";
 
 /** KBS-17-1 against real Postgres 17 + Valkey: POST /api/enquiries. */
@@ -53,6 +54,7 @@ function input(overrides: Partial<EnquiryInput> = {}): EnquiryInput {
     wedding_date: weeksOut(40),
     message: null,
     gown_ids: [],
+    consent: true,
     ...overrides,
   };
 }
@@ -109,6 +111,7 @@ function formPost(
     message: body.message ?? "",
   });
   for (const id of body.gown_ids) params.append("gown_ids", id);
+  if (body.consent) params.set("consent", "true");
   const field = overrides.token === undefined ? token : overrides.token;
   if (field !== null) params.set("csrf_token", field);
   return POST(
@@ -149,6 +152,7 @@ describe("POST /api/enquiries as a native form (KBS-89)", () => {
           email: body.email,
           wedding_date: body.wedding_date,
           message: "",
+          consent: "true",
           csrf_token: token,
         }).toString(),
       }),
@@ -160,6 +164,30 @@ describe("POST /api/enquiries as a native form (KBS-89)", () => {
     expect(await rowsFor(body.email)).toHaveLength(1);
     expect(row!.message).toBeNull();
     expect(await sql`SELECT 1 FROM enquiry_gowns WHERE enquiry_id = ${row!.id}`).toHaveLength(0);
+  });
+
+  it("records consent time and notice version (AC-ENQ-33)", async () => {
+    const body = input();
+    expect((await post(body)).status).toBe(201);
+    const [row] = await rowsFor(body.email);
+    expect(row!.consent_notice_version).toBe(PRIVACY_NOTICE_VERSION);
+    expect(Math.abs(Date.now() - new Date(row!.consent_given_at).getTime())).toBeLessThan(60_000);
+  });
+
+  it("refuses JSON without consent, writing nothing", async () => {
+    for (const consent of [false, undefined]) {
+      const body = input();
+      expect((await post({ ...body, consent })).status).toBe(422);
+      expect(await rowsFor(body.email)).toHaveLength(0);
+    }
+  });
+
+  it("refuses a native form with the box unticked, naming the consent field", async () => {
+    const body = { ...input(), consent: false as unknown as true };
+    const res = await formPost(body);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/enquire?error=invalid&fields=consent");
+    expect(await rowsFor(body.email)).toHaveLength(0);
   });
 
   it("stores repeated gown_ids", async () => {

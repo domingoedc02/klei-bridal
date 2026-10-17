@@ -82,6 +82,7 @@ describe("enquiryBodySchema", () => {
     contact_number: "+63 917 123 4567",
     email: "maricel@example.com",
     wedding_date: "2027-06-12",
+    consent: true,
   };
 
   it("accepts international numbers as typed (AC-ENQ-27)", () => {
