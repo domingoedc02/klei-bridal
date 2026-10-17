@@ -15,6 +15,7 @@ import { logger } from "@/server/observability/logger";
 import { captureError } from "@/server/observability/sentry";
 import { PipelineError } from "@/server/pipeline/errors";
 import type { ChatSettings } from "@/shared/chatHandoff";
+import { PRIVACY_NOTICE_VERSION } from "@/shared/privacy";
 import { daysBetween, isIsoDate, isValidTimeZone, todayIn } from "@/shared/dates";
 import {
   DEFAULT_LEAD_TIME_RULE,
@@ -69,6 +70,12 @@ export const enquiryBodySchema = z.object({
     .max(2000)
     .refine(noControlButLines, "Must not contain control characters.")
     .nullish(),
+  // KBS-30 / AC-ENQ-33: must be explicitly true. A native form checkbox posts "true";
+  // an unchecked one is absent, which fails here as "Required".
+  consent: z.preprocess(
+    (v) => (v === "true" ? true : v),
+    z.literal(true, { errorMap: () => ({ message: "Please tick the box to agree to the privacy notice." }) }),
+  ),
   // Zero gowns is a valid enquiry (AC-ENQ-04); 50 is the documented cap (AC-ENQ-19).
   gown_ids: z
     .array(z.string().uuid())
@@ -270,6 +277,8 @@ export async function submitEnquiry(
           email,
           weddingDate: input.wedding_date,
           message,
+          consentGivenAt: new Date(),
+          consentNoticeVersion: PRIVACY_NOTICE_VERSION,
           // ponytail: no first-party attribution cookie exists yet
           // (decision/analytics-attribution §2.1); stamp 'direct' server-side
           // and never read a client value. Read the cookie here once it lands.

@@ -11,6 +11,7 @@ import {
 } from "@/client/favourites/storage";
 import ConfirmationScreen, { type ConfirmationData } from "@/components/public/ConfirmationScreen";
 import type { ChatSettings } from "@/shared/chatHandoff";
+import { PRIVACY_PATH } from "@/shared/privacy";
 import { todayIn } from "@/shared/dates";
 import {
   ENQUIRY_FIELD_LABELS,
@@ -96,6 +97,10 @@ export default function EnquiryForm({
     if (pending) return;
     const form = event.currentTarget;
     const values = Object.fromEntries(new FormData(form).entries());
+    if (!values.consent) {
+      setError("Please tick the box to agree to the privacy notice.");
+      return;
+    }
     if (!values.wedding_date) {
       setError("Wedding date is required.");
       dateRef.current?.focus();
@@ -127,6 +132,7 @@ export default function EnquiryForm({
           wedding_date: values.wedding_date,
           message: values.message || undefined,
           gown_ids: gowns,
+          consent: values.consent === "true",
         }),
       });
       if (!response.ok) {
@@ -311,6 +317,14 @@ export default function EnquiryForm({
           <p>No gown selected yet. You can still send an enquiry.</p>
         )}
       </section>
+      <label className="consent">
+        <input type="checkbox" name="consent" value="true" required />{" "}
+        <span>
+          I have read the <Link href={PRIVACY_PATH}>privacy notice</Link> and agree to the studio
+          using my details to reply to this enquiry.
+        </span>
+      </label>
+
       {error ? (
         <p className="form-error" id="form-error" role="alert">
           {error}

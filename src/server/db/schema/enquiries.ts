@@ -51,6 +51,9 @@ export const enquiries = pgTable(
     status: text("status").notNull().default("new"),
     studioEmailStatus: text("studio_email_status").notNull().default("pending"),
     brideEmailStatus: text("bride_email_status").notNull().default("pending"),
+    // KBS-30: null on rows that predate the consent checkbox.
+    consentGivenAt: timestamp("consent_given_at", { withTimezone: true }),
+    consentNoticeVersion: text("consent_notice_version"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
