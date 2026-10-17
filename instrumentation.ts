@@ -19,6 +19,8 @@ export async function register() {
       initSentry(env.SENTRY_DSN, env.SENTRY_ENVIRONMENT);
       const { startImageWorker } = await import("@/server/worker/imageWorker");
       startImageWorker();
+      const { startRetentionJob } = await import("@/server/worker/retentionJob");
+      startRetentionJob();
       const { installCatalogueCacheOperator } = await import("@/server/services/catalogueCache");
       installCatalogueCacheOperator();
     }
