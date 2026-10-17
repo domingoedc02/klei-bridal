@@ -256,10 +256,12 @@ style preference.
   11pm–5am `Asia/Manila` (or whatever window the confirmed studio timezone settles on).
   Never `docker system prune -a` blind; pass `--volumes` only when explicitly intended — it
   can take `kbs-media` with it otherwise.
-- **HSTS caution inherited from `KBS-28`:** start with a short `max-age`, confirm at least one
-  successful TLS renewal in production, then raise it; no `preload` until renewal has
-  succeeded cleanly. On a single box, a renewal failure plus a long cached `max-age` is an
-  unreachable site, not a degraded one.
+- **HSTS (`KBS-28`, `KBS-64`):** the app sends `max-age=63072000` (2 years), with NO
+  `includeSubDomains` and NO `preload`. Do NOT add `includeSubDomains` until the first clean
+  production Let's Encrypt renewal is evidenced (`KBS-64-2`, client-confirmed); no `preload`
+  until renewals have run clean for a sustained period. Browsers cache the header for 2 years,
+  so it cannot be quickly undone: a renewal failure plus a cached `max-age` is an unreachable
+  site, not a degraded one. Check after deploy: `curl -sI https://<CLIENT_PRODUCTION_DOMAIN>/ | grep -i strict-transport`.
 
 ## Reference
 
