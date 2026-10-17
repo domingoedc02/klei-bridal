@@ -2,6 +2,8 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 
+import { db } from "@/server/db/client";
+import { taxonomyRedirectLocation } from "@/server/taxonomy-redirect";
 import { middleware } from "../../middleware";
 
 const sql = postgres(
@@ -9,8 +11,12 @@ const sql = postgres(
   { max: 1 },
 );
 const liveId = crypto.randomUUID();
+const inactiveId = crypto.randomUUID();
 const oldSlug = `old-${liveId}`;
 const liveSlug = `live-${liveId}`;
+const inactiveSlug = `inactive-${inactiveId}`;
+const inactiveAliasSlug = `old-inactive-${inactiveId}`;
+const secondAliasSlug = `old-second-${liveId}`;
 
 beforeAll(async () => {
   await sql`
@@ -19,13 +25,25 @@ beforeAll(async () => {
   `;
   await sql`
     INSERT INTO taxonomy_slug_redirects (vocabulary, old_slug, target_id)
-    VALUES ('collections', ${oldSlug}, ${liveId})
+    VALUES ('collections', ${oldSlug}, ${liveId}),
+      ('collections', ${secondAliasSlug}, ${liveId})
+  `;
+  await sql`
+    INSERT INTO collections (id, name, slug, is_active)
+    VALUES (${inactiveId}, ${inactiveSlug}, ${inactiveSlug}, false)
+  `;
+  await sql`
+    INSERT INTO taxonomy_slug_redirects (vocabulary, old_slug, target_id)
+    VALUES ('collections', ${inactiveAliasSlug}, ${inactiveId})
   `;
 });
 
 afterAll(async () => {
-  await sql`DELETE FROM taxonomy_slug_redirects WHERE old_slug = ${oldSlug}`;
-  await sql`DELETE FROM collections WHERE id = ${liveId}`;
+  await sql`
+    DELETE FROM taxonomy_slug_redirects
+    WHERE old_slug IN (${oldSlug}, ${secondAliasSlug}, ${inactiveAliasSlug})
+  `;
+  await sql`DELETE FROM collections WHERE id IN (${liveId}, ${inactiveId})`;
   await sql.end();
 });
 
@@ -78,5 +96,26 @@ describe("taxonomy slug redirects", () => {
 
     expect(response.status).not.toBe(301);
     expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("resolves every historical alias directly to the live canonical slug", async () => {
+    await expect(
+      taxonomyRedirectLocation(new URL(`http://localhost/collections/${secondAliasSlug}`), db),
+    ).resolves.toBe(`/collections/${liveSlug}`);
+    await expect(
+      taxonomyRedirectLocation(new URL(`http://localhost/collections/${oldSlug}`), db),
+    ).resolves.toBe(`/collections/${liveSlug}`);
+  });
+
+  it("does not redirect an alias whose target is inactive", async () => {
+    const response = await middleware(
+      new NextRequest(`http://localhost:3000/collections/${inactiveAliasSlug}`),
+    );
+
+    expect(response.status).not.toBe(301);
+    expect(response.headers.get("location")).toBeNull();
+    await expect(
+      taxonomyRedirectLocation(new URL(`http://localhost/collections/${inactiveAliasSlug}`), db),
+    ).resolves.toBeNull();
   });
 });

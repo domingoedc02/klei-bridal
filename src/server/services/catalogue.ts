@@ -200,10 +200,8 @@ async function loadCataloguePage(
   };
 }
 
-export async function listCatalogue(
-  input: GownFilterQuery,
-  database: Database = defaultDb,
-): Promise<CataloguePage> {
+/** Active taxonomy rows, in display order (shared by the catalogue and the sitemap). */
+export async function listActiveVocabulary(database: Database = defaultDb) {
   const [silhouetteRows, materialRows, collectionRows] = await Promise.all([
     database
       .select({ name: silhouettes.name, slug: silhouettes.slug })
@@ -221,11 +219,23 @@ export async function listCatalogue(
       .where(eq(collections.isActive, true))
       .orderBy(asc(collections.sortOrder), asc(collections.name)),
   ]);
-  const vocabulary = {
+  return {
     silhouettes: silhouetteRows,
     materials: materialRows,
     collections: collectionRows,
   };
+}
+
+export async function listCatalogue(
+  input: GownFilterQuery,
+  database: Database = defaultDb,
+): Promise<CataloguePage> {
+  const vocabulary = await listActiveVocabulary(database);
+  const {
+    silhouettes: silhouetteRows,
+    materials: materialRows,
+    collections: collectionRows,
+  } = vocabulary;
   const query = resolveCatalogueCacheQuery(input, {
     silhouettes: silhouetteRows.map((value) => value.slug),
     materials: materialRows.map((value) => value.slug),
