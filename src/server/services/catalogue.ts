@@ -231,8 +231,11 @@ export async function listCatalogue(
   database: Database = defaultDb,
 ): Promise<CataloguePage> {
   const vocabulary = await listActiveVocabulary(database);
-  const { silhouettes: silhouetteRows, materials: materialRows, collections: collectionRows } =
-    vocabulary;
+  const {
+    silhouettes: silhouetteRows,
+    materials: materialRows,
+    collections: collectionRows,
+  } = vocabulary;
   const query = resolveCatalogueCacheQuery(input, {
     silhouettes: silhouetteRows.map((value) => value.slug),
     materials: materialRows.map((value) => value.slug),
