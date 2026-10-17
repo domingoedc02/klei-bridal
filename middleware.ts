@@ -15,6 +15,10 @@ import {
 } from "./src/server/pipeline/csrf";
 import { requestIdOf } from "./src/server/pipeline/request-id";
 import { gownFilterQuerySchema } from "./src/shared/schemas/gownFilters";
+import {
+  isTaxonomyRedirectCandidate,
+  taxonomyRedirectLocation,
+} from "./src/server/taxonomy-redirect";
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
@@ -42,7 +46,7 @@ function isDocumentGet(request: NextRequest): boolean {
  * responses. CSP (KBS-28-2) is report-only with one nonce per response,
  * passed to the layout as `x-nonce`.
  */
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const requestId = requestIdOf(request.headers);
   const nonce = generateNonce();
 
@@ -62,6 +66,21 @@ export function middleware(request: NextRequest) {
       .map((part) => part.trim())
       .filter((part) => part && !part.startsWith(`${CSRF_COOKIE}=`));
     requestHeaders.set("cookie", [...others, `${CSRF_COOKIE}=${mintedCsrf}`].join("; "));
+  }
+
+  if (request.method === "GET" && isTaxonomyRedirectCandidate(request.nextUrl)) {
+    const location = await taxonomyRedirectLocation(request.nextUrl);
+    if (location) {
+      const response = new NextResponse(null, {
+        status: 301,
+        headers: {
+          Location: location,
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+      applySecurityHeaders(response.headers, request.nextUrl.pathname, { nonce });
+      return response;
+    }
   }
 
   if (request.method === "GET" && request.nextUrl.pathname === "/gowns") {
