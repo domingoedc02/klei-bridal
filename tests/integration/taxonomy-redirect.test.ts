@@ -61,4 +61,22 @@ describe("taxonomy slug redirects", () => {
     expect(response.status).toBe(301);
     expect(response.headers.get("location")).toBe(`/gowns?collection=${liveSlug}`);
   });
+
+  it("does not redirect live taxonomy filters", async () => {
+    const response = await middleware(
+      new NextRequest(`http://localhost:3000/gowns?collection=${liveSlug}`),
+    );
+
+    expect(response.status).not.toBe(301);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("does not redirect unknown taxonomy filters without an alias", async () => {
+    const response = await middleware(
+      new NextRequest(`http://localhost:3000/gowns?collection=unknown-${liveSlug}`),
+    );
+
+    expect(response.status).not.toBe(301);
+    expect(response.headers.get("location")).toBeNull();
+  });
 });
