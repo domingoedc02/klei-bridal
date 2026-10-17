@@ -7,6 +7,7 @@ import {
   getFavouriteIds,
   getFavouriteNames,
   removeFavourite,
+  saveContactDetails,
   type ContactDetails,
 } from "@/client/favourites/storage";
 import ConfirmationScreen, { type ConfirmationData } from "@/components/public/ConfirmationScreen";
@@ -146,19 +147,12 @@ export default function EnquiryForm({
         }
         throw new Error("We could not send your enquiry. Please check your details and try again.");
       }
-      try {
-        window.localStorage.setItem(
-          "kbs.contact.v1",
-          JSON.stringify({
-            firstName: values.first_name,
-            lastName: values.last_name,
-            contactNumber: values.contact_number,
-            email: values.email,
-          }),
-        );
-      } catch {
-        /* blocked storage must not block submission */
-      }
+      saveContactDetails({
+        firstName: String(values.first_name),
+        lastName: String(values.last_name),
+        contactNumber: String(values.contact_number),
+        email: String(values.email),
+      });
       // Response is the approved 201/200 shape; anything unexpected just drops the extras.
       const result = (await response.json().catch(() => null)) as {
         reference?: unknown;
