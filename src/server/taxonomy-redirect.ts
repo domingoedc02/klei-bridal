@@ -52,7 +52,12 @@ async function directRedirect(type: TaxonomyType, slug: string, database: Databa
   const [alias] = await database
     .select({ targetId: taxonomySlugRedirects.targetId })
     .from(taxonomySlugRedirects)
-    .where(and(eq(taxonomySlugRedirects.vocabulary, type), eq(taxonomySlugRedirects.oldSlug, slug)))
+    .where(
+      and(
+        eq(taxonomySlugRedirects.vocabulary, type),
+        eq(taxonomySlugRedirects.oldSlug, slug),
+      ),
+    )
     .limit(1);
   if (!alias) return null;
 
@@ -70,7 +75,6 @@ async function filterRedirect(url: URL, database: Database) {
     if (QUERY_KEYS.has(key)) params.append(key, value);
   }
 
-  let changed = false;
   for (const type of TYPES) {
     const key = type === "collections" ? "collection" : type.slice(0, -1);
     const values = [...new Set(params.getAll(key))].filter((value) => SLUG.test(value));
@@ -105,15 +109,11 @@ async function filterRedirect(url: URL, database: Database) {
       if (!target) return null;
       replacements.set(alias.oldSlug, target.slug);
     }
-    const nextValues = values.map((value) => replacements.get(value) ?? value);
-    if (nextValues.some((value, index) => value !== values[index])) {
-      changed = true;
-      params.delete(key);
-      for (const value of nextValues) params.append(key, value);
-    }
+    params.delete(key);
+    for (const value of values) params.append(key, replacements.get(value) ?? value);
   }
 
-  return changed ? `/gowns${params.toString() ? `?${params.toString()}` : ""}` : null;
+  return `/gowns${params.toString() ? `?${params.toString()}` : ""}`;
 }
 
 /** Return only a same-origin relative redirect target; null means continue request. */
