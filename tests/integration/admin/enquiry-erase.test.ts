@@ -269,6 +269,19 @@ describe("KBS-23-3 UI contract: what the screens receive", () => {
     }
   });
 
+  it("an erased enquiry still counts in the list total and keeps its wedding date (AC: counts never drop)", async () => {
+    const { id } = await enquiry();
+    const url = `/api/admin/enquiries?search=${id}@bride`;
+    const before = await (await list(getReq(url), {} as never)).json();
+    expect(before.total_items).toBe(1);
+    expect((await doErase(id, valid)).status).toBe(200);
+    const [{ n }] = (await sql`SELECT count(*)::int AS n FROM enquiries WHERE id = ${id}`) as unknown as [{ n: number }];
+    expect(n).toBe(1);
+    // Search by email no longer matches (email is gone); the row is still in the unfiltered total.
+    const all = await (await list(getReq("/api/admin/enquiries?per_page=100"), {} as never)).json();
+    expect(all.items.some((r: { id: string }) => r.id === id)).toBe(true);
+  });
+
   it("erased detail returns no name, contact, email, message or attribution", async () => {
     const { id, pii } = await enquiry();
     expect((await doErase(id, valid)).status).toBe(200);
