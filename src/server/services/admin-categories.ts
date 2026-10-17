@@ -93,7 +93,13 @@ async function exactMatch(tx: DbOrTx, t: Table, name: string, exceptId?: string)
   return row;
 }
 
-async function uniqueSlug(tx: DbOrTx, t: Table, name: string, fallback: string) {
+async function uniqueSlug(
+  tx: DbOrTx,
+  t: Table,
+  name: string,
+  fallback: string,
+  vocabulary: CategoryType,
+) {
   const base = (slugify(name) || fallback).slice(0, 80);
   const used = new Set(
     (
@@ -103,6 +109,16 @@ async function uniqueSlug(tx: DbOrTx, t: Table, name: string, fallback: string) 
         .where(sql`${t.slug} like ${`${base}%`}`)
     ).map((r) => r.slug),
   );
+  const aliases = await tx
+    .select({ slug: taxonomySlugRedirects.oldSlug })
+    .from(taxonomySlugRedirects)
+    .where(
+      and(
+        eq(taxonomySlugRedirects.vocabulary, vocabulary),
+        sql`${taxonomySlugRedirects.oldSlug} like ${`${base}%`}`,
+      ),
+    );
+  for (const alias of aliases) used.add(alias.slug);
   if (!used.has(base)) return base;
   for (let n = 2; n < 10_000; n++) {
     const candidate = `${base.slice(0, 80 - `-${n}`.length)}-${n}`;
@@ -155,7 +171,7 @@ export async function createCategory(
         .insert(t)
         .values({
           name: input.name,
-          slug: await uniqueSlug(tx, t, input.name, entity),
+          slug: await uniqueSlug(tx, t, input.name, entity, type),
           description: input.description ?? null,
           createdBy: actor.staff.id,
           updatedBy: actor.staff.id,
