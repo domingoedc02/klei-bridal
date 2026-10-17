@@ -254,6 +254,20 @@ describe("seed: every vocabulary id is a UUIDv7 (src/server/db/uuid.ts)", () => 
   });
 });
 
+describe("seed: retention settings are non-null (KBS-172)", () => {
+  // Assumes `pnpm db:seed` ran before this suite (CI does; see ci.yml).
+  // Types, not the shipped values: retention-job.test.ts flips these rows
+  // while it runs. seed.test.ts asserts 24 / false on a throwaway database.
+  it("seeds retention_months as a non-null number and retention_enabled as a boolean", async () => {
+    const rows = await sql`
+      SELECT key, value FROM settings WHERE key IN ('retention_months', 'retention_enabled')
+    `;
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    expect(typeof byKey.retention_months).toBe("number");
+    expect(typeof byKey.retention_enabled).toBe("boolean");
+  });
+});
+
 describe("seed: sample gowns, one in stock and one made-to-order (KBS-9 AC-10)", () => {
   // Assumes `pnpm db:seed` ran before this suite (CI does; see ci.yml).
   it("seeds at least one in-stock and one made-to-order gown, as drafts with v7 ids", async () => {
