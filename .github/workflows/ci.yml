@@ -139,6 +139,10 @@ jobs:
       - name: Seed vocabulary and settings
         run: pnpm db:seed
 
+      # Insert-only: the second run must exit 0 and change no row (KBS-172).
+      - name: Re-seed (idempotency)
+        run: pnpm db:seed
+
       - name: Integration tests
         run: pnpm test:integration
 

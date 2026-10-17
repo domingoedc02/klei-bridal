@@ -115,8 +115,13 @@ async function main() {
       { key: "lead_time_notice_copy", value: NOTICE_COPY },
       // Retention is INDEFINITE by the client's own decision — the flag
       // ships off, but the columns exist as the switch if that changes.
+      // `value` is NOT NULL, so months is an inert placeholder (24: the
+      // team's assumed value, not client-specified; never shown in the
+      // privacy notice) that only matters if the flag is flipped.
+      // decision/settings-null-seed-fix. Insert-only below: a re-seed
+      // never resets an admin-edited value.
       { key: "retention_enabled", value: false },
-      { key: "retention_months", value: null },
+      { key: "retention_months", value: 24 },
       // UNCONFIRMED ASSUMPTION, not fact — flagged here and in
       // spec/data-model, not quietly presented as a client answer.
       { key: "studio_timezone", value: "Asia/Manila" },
