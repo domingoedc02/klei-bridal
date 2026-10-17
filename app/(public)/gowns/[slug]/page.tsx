@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 
 import GownGallery from "@/components/public/GownGallery";
+import FavouriteButton from "@/components/public/FavouriteButton";
 import { env } from "@/config/env";
 import {
   metadataDescription,
@@ -91,6 +92,7 @@ export default async function GownDetailPage({ params }: Props) {
       <p>{price}</p>
       {gown.description ? <p>{gown.description}</p> : null}
       <Link href={`/enquire?gown=${encodeURIComponent(gown.slug)}`}>Inquire about this gown</Link>
+      <FavouriteButton gownId={gown.id} gownName={gown.name} />
       <GownGallery gownName={gown.name} images={images} />
     </main>
   );

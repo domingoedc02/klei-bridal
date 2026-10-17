@@ -1,11 +1,19 @@
-// Her list — "saved on this device" (localStorage only, decision/favourites-storage).
-// The page itself stays server-rendered; the interactive leaf reading
-// localStorage lives in src/client/favourites (KBS-14).
-export default function FavouritesPage() {
+import { listCatalogue } from "@/server/services/catalogue";
+import FavouritesView from "@/components/public/FavouritesView";
+import { gownFilterQuerySchema } from "@/shared/schemas/gownFilters";
+
+export const dynamic = "force-dynamic";
+
+export default async function FavouritesPage() {
+  const catalogue = await listCatalogue(gownFilterQuerySchema.parse({}));
   return (
-    <main>
-      <h1>Favourites</h1>
-      <p>Favourites placeholder (KBS-6) — real content lands with KBS-14.</p>
-    </main>
+    <FavouritesView
+      gowns={catalogue.cards.map((card) => ({
+        id: card.id,
+        slug: card.slug,
+        name: card.name,
+        image: null,
+      }))}
+    />
   );
 }

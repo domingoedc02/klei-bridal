@@ -11,6 +11,7 @@ import {
   type GownFilterQuery,
 } from "@/shared/schemas/gownFilters";
 import FavouriteNameHydrator from "@/components/public/FavouriteNameHydrator";
+import FavouriteButton from "@/components/public/FavouriteButton";
 import { MEDIA_PREFIX } from "@/shared/images";
 
 export const dynamic = "force-dynamic";
@@ -190,6 +191,7 @@ export default async function GownsPage({ searchParams }: Props) {
                     <p>{money(card.priceMinor, card.currency, card.priceStatus)}</p>
                     {card.isInStock ? <span>Available now</span> : null}
                   </Link>
+                  <FavouriteButton gownId={card.id} gownName={card.name} />
                 </li>
               );
             })}
