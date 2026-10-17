@@ -26,6 +26,7 @@ export type ContactDetails = {
 };
 
 const memoryStore: Record<string, string> = {};
+const memoryFallbackKeys = new Set<string>();
 
 function getStorage(): Storage | null {
   try {
@@ -37,10 +38,11 @@ function getStorage(): Storage | null {
 
 function readRaw(key: string): string | null {
   const storage = getStorage();
-  if (!storage) return memoryStore[key] ?? null;
+  if (!storage || memoryFallbackKeys.has(key)) return memoryStore[key] ?? null;
   try {
     return storage.getItem(key);
   } catch {
+    memoryFallbackKeys.add(key);
     return memoryStore[key] ?? null;
   }
 }
@@ -48,14 +50,17 @@ function readRaw(key: string): string | null {
 function writeRaw(key: string, value: string): boolean {
   const storage = getStorage();
   if (!storage) {
+    memoryFallbackKeys.add(key);
     memoryStore[key] = value;
     return false;
   }
   try {
     storage.setItem(key, value);
+    memoryFallbackKeys.delete(key);
     memoryStore[key] = value;
     return true;
   } catch {
+    memoryFallbackKeys.add(key);
     memoryStore[key] = value;
     return false;
   }
@@ -64,6 +69,7 @@ function writeRaw(key: string, value: string): boolean {
 function removeRaw(key: string): boolean {
   const storage = getStorage();
   delete memoryStore[key];
+  memoryFallbackKeys.delete(key);
   if (!storage) return false;
   try {
     storage.removeItem(key);
