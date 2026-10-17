@@ -21,6 +21,8 @@ export async function register() {
       startImageWorker();
       const { startRetentionJob } = await import("@/server/worker/retentionJob");
       startRetentionJob();
+      const { startMailWorker } = await import("@/server/worker/mailWorker");
+      startMailWorker();
       const { installCatalogueCacheOperator } = await import("@/server/services/catalogueCache");
       installCatalogueCacheOperator();
     }
