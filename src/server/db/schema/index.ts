@@ -6,6 +6,7 @@ export * from "./gown-collections";
 export * from "./gown-images";
 export * from "./gown-materials";
 export * from "./gown-slug-redirects";
+export * from "./taxonomy-slug-redirects";
 export * from "./gowns";
 export * from "./image-jobs";
 export * from "./materials";

@@ -11,6 +11,7 @@ import {
   gowns,
   materials,
   silhouettes,
+  taxonomySlugRedirects,
 } from "@/server/db/schema";
 import type { DbOrTx } from "@/server/auth/session";
 import { inetOrNull } from "@/server/ratelimit/client-ip";
@@ -333,6 +334,11 @@ export async function mergeCategory(
       if (!source || !target) throw new PipelineError(404, "NOT_FOUND", "Value not found.");
 
       const movedCount = await repoint(tx, type, id, targetId);
+      await tx.insert(taxonomySlugRedirects).values({
+        vocabulary: type,
+        oldSlug: source.slug,
+        targetId,
+      });
       await tx.delete(t).where(eq(t.id, id));
       await tx.insert(auditLog).values({
         occurredAt: new Date(),

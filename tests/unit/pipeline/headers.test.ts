@@ -105,8 +105,8 @@ describe("/e/* always ends with Referrer-Policy: no-referrer", () => {
 });
 
 describe("headers are applied by the shared mechanism", () => {
-  it("middleware sets the full set and the request id on a page", () => {
-    const response = middleware(new NextRequest("http://localhost/gowns"));
+  it("middleware sets the full set and the request id on a page", async () => {
+    const response = await middleware(new NextRequest("http://localhost/gowns"));
     for (const [name, value] of Object.entries(BASELINE)) {
       expect(response.headers.get(name)).toBe(value);
     }
@@ -114,26 +114,26 @@ describe("headers are applied by the shared mechanism", () => {
     expect(response.headers.get("x-request-id")).toBeTruthy();
   });
 
-  it("middleware mints a signed kbs_csrf on a first page load, forwards it, and leaves a valid one alone", () => {
-    const first = middleware(new NextRequest("http://localhost/enquire"));
+  it("middleware mints a signed kbs_csrf on a first page load, forwards it, and leaves a valid one alone", async () => {
+    const first = await middleware(new NextRequest("http://localhost/enquire"));
     const token = /kbs_csrf=([^;]+)/.exec(first.headers.get("set-cookie") ?? "")?.[1];
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/);
     expect(first.headers.get("x-middleware-request-cookie")).toContain(`kbs_csrf=${token}`);
-    const again = middleware(
+    const again = await middleware(
       new NextRequest("http://localhost/enquire", { headers: { cookie: `kbs_csrf=${token}` } }),
     );
     expect(again.headers.get("set-cookie")).toBeNull();
-    const forged = middleware(
+    const forged = await middleware(
       new NextRequest("http://localhost/enquire", { headers: { cookie: "kbs_csrf=x.y" } }),
     );
     expect(forged.headers.get("set-cookie")).toContain("kbs_csrf=");
     expect(
-      middleware(new NextRequest("http://localhost/api/enquiries")).headers.get("set-cookie"),
+      (await middleware(new NextRequest("http://localhost/api/enquiries"))).headers.get("set-cookie"),
     ).toBeNull();
   });
 
-  it("middleware applies the /e/* override", () => {
-    const response = middleware(new NextRequest("http://localhost/e/tok"));
+  it("middleware applies the /e/* override", async () => {
+    const response = await middleware(new NextRequest("http://localhost/e/tok"));
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
   });

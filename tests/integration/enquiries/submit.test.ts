@@ -131,7 +131,7 @@ function formPost(
 
 describe("POST /api/enquiries as a native form (KBS-89)", () => {
   it("first visit: GET /enquire cookie + hidden field -> one stored enquiry, 303 to /enquire/sent?ref=", async () => {
-    const page = middleware(new NextRequest("http://localhost:3000/enquire"));
+    const page = await middleware(new NextRequest("http://localhost:3000/enquire"));
     const token = /kbs_csrf=([^;]+)/.exec(page.headers.get("set-cookie") ?? "")?.[1];
     expect(token).toBeTruthy();
     if (!token) throw new Error("test setup: middleware did not mint csrf token");
@@ -311,7 +311,7 @@ describe("POST /api/enquiries (KBS-17-1)", () => {
   });
 
   it("first visit: GET /enquire mints kbs_csrf, then the POST that echoes it gets 201 (no injected cookie)", async () => {
-    const page = middleware(new NextRequest("http://localhost:3000/enquire"));
+    const page = await middleware(new NextRequest("http://localhost:3000/enquire"));
     const setCookie = page.headers.get("set-cookie") ?? "";
     const token = /kbs_csrf=([^;]+)/.exec(setCookie)?.[1];
     expect(token).toBeTruthy();
