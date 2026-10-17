@@ -8,7 +8,7 @@ import { staffUsers } from "./staff-users";
  * week figure some early ADRs still carry), notice copy per band,
  * studio chat handles, `studio_timezone` (seeded `Asia/Manila`, labelled
  * an UNCONFIRMED assumption — not stated as fact), and the retention
- * flags (`retention_enabled=false`, `retention_months=24`) — the
+ * flags (`retention_enabled=false`, `retention_months=null`) — the
  * columns must exist even though the flag ships off, because retention
  * is indefinite by the client's own decision and this is the switch if
  * that ever changes (spec/data-model "Lifecycle & retention").

@@ -116,7 +116,7 @@ async function main() {
       // Retention is INDEFINITE by the client's own decision — the flag
       // ships off, but the columns exist as the switch if that changes.
       { key: "retention_enabled", value: false },
-      { key: "retention_months", value: 24 },
+      { key: "retention_months", value: null },
       // UNCONFIRMED ASSUMPTION, not fact — flagged here and in
       // spec/data-model, not quietly presented as a client answer.
       { key: "studio_timezone", value: "Asia/Manila" },
