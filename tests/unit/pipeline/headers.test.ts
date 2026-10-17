@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { middleware } from "../../../middleware";
 import {
   HSTS,
+  baselineSecurityHeaders,
   headerOverrides,
   securityHeadersFor,
   applySecurityHeaders,
@@ -10,7 +11,7 @@ import {
 import { withPipeline } from "../../../src/server/pipeline";
 
 // KBS-28-1: one header mechanism, global baseline + per-route override
-// registry, HSTS short and without preload.
+// registry; HSTS raised in KBS-64 (2 years, no includeSubDomains/preload).
 
 const BASELINE = {
   "strict-transport-security": HSTS,
@@ -20,10 +21,10 @@ const BASELINE = {
 };
 
 describe("security header registry", () => {
-  it("starts HSTS short (≤ 1 day), with no preload", () => {
-    const maxAge = Number(/max-age=(\d+)/.exec(HSTS)?.[1]);
-    expect(maxAge).toBeGreaterThan(0);
-    expect(maxAge).toBeLessThanOrEqual(86400);
+  it("sets HSTS to exactly two years, no includeSubDomains, no preload (KBS-64)", () => {
+    expect(HSTS).toBe("max-age=63072000");
+    expect(baselineSecurityHeaders["strict-transport-security"]).toBe("max-age=63072000");
+    expect(HSTS).not.toMatch(/includeSubDomains/i);
     expect(HSTS).not.toMatch(/preload/i);
   });
 
@@ -45,17 +46,14 @@ describe("security header registry", () => {
     "/api/e/abc123",
     "/api/e/abc123/channel",
     "/api/e",
-  ])(
-    "overrides Referrer-Policy and adds X-Robots-Tag on %s",
-    (path) => {
-      expect(securityHeadersFor(path)).toEqual({
-        ...BASELINE,
-        "referrer-policy": "no-referrer",
-        "cache-control": "no-store",
-        "x-robots-tag": "noindex, nofollow",
-      });
-    },
-  );
+  ])("overrides Referrer-Policy and adds X-Robots-Tag on %s", (path) => {
+    expect(securityHeadersFor(path)).toEqual({
+      ...BASELINE,
+      "referrer-policy": "no-referrer",
+      "cache-control": "no-store",
+      "x-robots-tag": "noindex, nofollow",
+    });
+  });
 
   it("never emits a CORS allow-origin header anywhere", () => {
     for (const path of ["/", "/e/x", "/api/x"]) {

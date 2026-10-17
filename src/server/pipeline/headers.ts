@@ -9,15 +9,16 @@
  */
 
 /**
- * HSTS starts deliberately SHORT, with no `preload` (KBS-28-1, devops +
- * security-eng). Traefik terminates TLS (Let's Encrypt under Dokploy); the
- * app only emits the header. On a single box, a failed renewal plus a long,
+ * HSTS: two years (spec/security), NO `includeSubDomains`, NO `preload`
+ * (KBS-64). Traefik terminates TLS (Let's Encrypt under Dokploy); the app
+ * only emits the header. On a single box, a failed renewal plus a long,
  * client-cached max-age means the site is unreachable, not just degraded.
- * ponytail: raise to spec/security's `max-age=63072000; includeSubDomains`
- * after the first clean production renewal. Add `preload` only after
- * renewals have run clean for a sustained period.
+ * ponytail: add `includeSubDomains` (KBS-64-2) only after the first clean
+ * production cert renewal is evidenced; add `preload` only after renewals
+ * have run clean for a sustained period. Browsers cache this for 2 years, so
+ * rollback is not instant: do not raise either flag early.
  */
-export const HSTS = "max-age=300; includeSubDomains";
+export const HSTS = "max-age=63072000";
 
 export const baselineSecurityHeaders: Readonly<Record<string, string>> = {
   "strict-transport-security": HSTS,
@@ -40,7 +41,10 @@ export const headerOverrides: readonly HeaderOverride[] = [
     // in a Referer and must never be indexed.
     reason: "enquiry short link /e/:token (KBS-29)",
     matches: (pathname) =>
-      pathname === "/e" || pathname.startsWith("/e/") || pathname === "/api/e" || pathname.startsWith("/api/e/"),
+      pathname === "/e" ||
+      pathname.startsWith("/e/") ||
+      pathname === "/api/e" ||
+      pathname.startsWith("/api/e/"),
     headers: {
       "referrer-policy": "no-referrer",
       "cache-control": "no-store",
