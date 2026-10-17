@@ -1,13 +1,11 @@
 import { requireStaffPage } from "@/server/auth/page-session";
+import { getAdminSettings } from "@/server/services/admin-settings";
+import SettingsForm from "@/components/admin/SettingsForm";
 
-// Lead-time window + notice copy, studio handles, UTM link generator.
-// Real implementation: KBS-25.
+export const dynamic = "force-dynamic";
+
 export default async function AdminSettingsPage() {
   await requireStaffPage();
-  return (
-    <main>
-      <h1>Settings</h1>
-      <p>Admin settings placeholder (KBS-6) — real content lands with KBS-25.</p>
-    </main>
-  );
+  const settings = await getAdminSettings();
+  return <SettingsForm initial={settings} />;
 }
